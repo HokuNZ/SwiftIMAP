@@ -176,6 +176,29 @@ final class IMAPEncoderTests: XCTestCase {
         XCTAssertEqual(result, "A018 COPY 1,3,5:7 \"Trash\"\r\n")
     }
     
+    func testEncodeMoveCommand() throws {
+        let command = IMAPCommand(tag: "A019", command: .move(
+            sequence: .single(42),
+            mailbox: "Archive"
+        ))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A019 MOVE 42 \"Archive\"\r\n")
+    }
+    
+    func testEncodeStoreWithFlagEnum() throws {
+        let command = IMAPCommand(tag: "A020", command: .store(
+            sequence: .single(1),
+            flags: IMAPCommand.StoreFlags(action: .set, flags: [.seen, .flagged]),
+            silent: false
+        ))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A020 STORE 1 FLAGS (\\Seen \\Flagged)\r\n")
+    }
+    
     func testEncodeUIDFetchCommand() throws {
         let command = IMAPCommand(tag: "A019", command: .uid(.fetch(
             sequence: .single(12345),
@@ -286,6 +309,17 @@ final class IMAPEncoderTests: XCTestCase {
         XCTAssertEqual(String(data: encoded, encoding: .utf8), expected)
     }
     
+    func testEncodeUIDMoveCommand() throws {
+        let command = IMAPCommand(
+            tag: "A030",
+            command: .uid(.move(sequence: .single(123), mailbox: "Sent"))
+        )
+        let encoded = try encoder.encode(command)
+        
+        let expected = "A030 UID MOVE 123 \"Sent\"\r\n"
+        XCTAssertEqual(String(data: encoded, encoding: .utf8), expected)
+    }
+    
     func testEncodeUIDStoreCommand() throws {
         let command = IMAPCommand(
             tag: "A029",
@@ -299,5 +333,19 @@ final class IMAPEncoderTests: XCTestCase {
         
         let expected = "A029 UID STORE 456 +FLAGS (\\Seen)\r\n"
         XCTAssertEqual(String(data: encoded, encoding: .utf8), expected)
+    }
+    
+    func testSequenceSetFromUIDs() throws {
+        // Test single UID
+        let single = IMAPCommand.SequenceSet.set([42])
+        XCTAssertEqual(single.stringValue, "42")
+        
+        // Test multiple UIDs
+        let multiple = IMAPCommand.SequenceSet.set([1, 3, 5, 7])
+        XCTAssertEqual(multiple.stringValue, "1,3,5,7")
+        
+        // Test with unsorted UIDs (should be sorted)
+        let unsorted = IMAPCommand.SequenceSet.set([5, 1, 3])
+        XCTAssertEqual(unsorted.stringValue, "1,3,5")
     }
 }

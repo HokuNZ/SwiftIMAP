@@ -28,7 +28,14 @@ public struct MessageSummary: Sendable {
     }
 }
 
-public struct MessageSummary: Sendable {
+public enum Flag: String, Hashable, Sendable {
+    case seen = "\\Seen"
+    case answered = "\\Answered"
+    case flagged = "\\Flagged"
+    case deleted = "\\Deleted"
+    case draft = "\\Draft"
+    case recent = "\\Recent"
+}
 
 public struct Envelope: Sendable {
     public let date: Date?
@@ -88,15 +95,6 @@ public struct Address: Sendable, Hashable {
         }
         return emailAddress
     }
-}
-
-public enum Flag: String, Hashable, Sendable {
-    case seen = "\\Seen"
-    case answered = "\\Answered"
-    case flagged = "\\Flagged"
-    case deleted = "\\Deleted"
-    case draft = "\\Draft"
-    case recent = "\\Recent"
 }
 
 public struct BodyStructure: Sendable {

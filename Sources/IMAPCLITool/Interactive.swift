@@ -139,6 +139,92 @@ struct Interactive: AsyncParsableCommand {
                             print("No mailbox is currently selected")
                         }
                         
+                    case "read", "markread":
+                        if let mailbox = currentMailbox {
+                            if let uidStr = argument, let uid = UInt32(uidStr) {
+                                try await markAsRead(client: client, mailbox: mailbox, uid: uid)
+                            } else {
+                                print("Usage: read <uid>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "unread", "markunread":
+                        if let mailbox = currentMailbox {
+                            if let uidStr = argument, let uid = UInt32(uidStr) {
+                                try await markAsUnread(client: client, mailbox: mailbox, uid: uid)
+                            } else {
+                                print("Usage: unread <uid>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "flag":
+                        if let mailbox = currentMailbox {
+                            if let uidStr = argument, let uid = UInt32(uidStr) {
+                                try await flagMessage(client: client, mailbox: mailbox, uid: uid)
+                            } else {
+                                print("Usage: flag <uid>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "unflag":
+                        if let mailbox = currentMailbox {
+                            if let uidStr = argument, let uid = UInt32(uidStr) {
+                                try await unflagMessage(client: client, mailbox: mailbox, uid: uid)
+                            } else {
+                                print("Usage: unflag <uid>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "copy":
+                        if let mailbox = currentMailbox {
+                            let args = argument?.split(separator: " ", maxSplits: 1).map(String.init) ?? []
+                            if args.count == 2, let uid = UInt32(args[0]) {
+                                try await copyMessage(client: client, from: mailbox, uid: uid, to: args[1])
+                            } else {
+                                print("Usage: copy <uid> <destination_mailbox>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "move":
+                        if let mailbox = currentMailbox {
+                            let args = argument?.split(separator: " ", maxSplits: 1).map(String.init) ?? []
+                            if args.count == 2, let uid = UInt32(args[0]) {
+                                try await moveMessage(client: client, from: mailbox, uid: uid, to: args[1])
+                            } else {
+                                print("Usage: move <uid> <destination_mailbox>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "delete":
+                        if let mailbox = currentMailbox {
+                            if let uidStr = argument, let uid = UInt32(uidStr) {
+                                try await deleteMessage(client: client, mailbox: mailbox, uid: uid)
+                            } else {
+                                print("Usage: delete <uid>")
+                            }
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
+                    case "expunge":
+                        if let mailbox = currentMailbox {
+                            try await expungeMailbox(client: client, mailbox: mailbox)
+                        } else {
+                            print("No mailbox selected. Use 'select <mailbox>' first")
+                        }
+                        
                     default:
                         print("Unknown command: \(command)")
                         print("Type 'help' for available commands")
@@ -168,6 +254,16 @@ struct Interactive: AsyncParsableCommand {
           fetch <uid>          - Fetch a message by UID
           capability           - Show server capabilities
           close                - Close selected mailbox
+          
+        Message manipulation commands (require mailbox selected):
+          read <uid>           - Mark message as read
+          unread <uid>         - Mark message as unread
+          flag <uid>           - Flag message (star/important)
+          unflag <uid>         - Remove flag from message
+          copy <uid> <mailbox> - Copy message to another mailbox
+          move <uid> <mailbox> - Move message to another mailbox
+          delete <uid>         - Mark message for deletion
+          expunge              - Permanently delete messages marked for deletion
         """)
     }
     
@@ -424,5 +520,56 @@ struct Interactive: AsyncParsableCommand {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+    
+    // MARK: - Message Manipulation Commands
+    
+    private func markAsRead(client: IMAPClient, mailbox: String, uid: UID) async throws {
+        print("Marking message \(uid) as read...")
+        try await client.markAsRead(uid: uid, in: mailbox)
+        print("✓ Message marked as read")
+    }
+    
+    private func markAsUnread(client: IMAPClient, mailbox: String, uid: UID) async throws {
+        print("Marking message \(uid) as unread...")
+        try await client.markAsUnread(uid: uid, in: mailbox)
+        print("✓ Message marked as unread")
+    }
+    
+    private func flagMessage(client: IMAPClient, mailbox: String, uid: UID) async throws {
+        print("Flagging message \(uid)...")
+        try await client.storeFlags(uid: uid, in: mailbox, flags: [.flagged], action: .add)
+        print("✓ Message flagged")
+    }
+    
+    private func unflagMessage(client: IMAPClient, mailbox: String, uid: UID) async throws {
+        print("Removing flag from message \(uid)...")
+        try await client.storeFlags(uid: uid, in: mailbox, flags: [.flagged], action: .remove)
+        print("✓ Flag removed")
+    }
+    
+    private func copyMessage(client: IMAPClient, from sourceMailbox: String, uid: UID, to destinationMailbox: String) async throws {
+        print("Copying message \(uid) from '\(sourceMailbox)' to '\(destinationMailbox)'...")
+        try await client.copyMessage(uid: uid, from: sourceMailbox, to: destinationMailbox)
+        print("✓ Message copied successfully")
+    }
+    
+    private func moveMessage(client: IMAPClient, from sourceMailbox: String, uid: UID, to destinationMailbox: String) async throws {
+        print("Moving message \(uid) from '\(sourceMailbox)' to '\(destinationMailbox)'...")
+        try await client.moveMessage(uid: uid, from: sourceMailbox, to: destinationMailbox)
+        print("✓ Message moved successfully")
+    }
+    
+    private func deleteMessage(client: IMAPClient, mailbox: String, uid: UID) async throws {
+        print("Marking message \(uid) for deletion...")
+        try await client.markForDeletion(uid: uid, in: mailbox)
+        print("✓ Message marked for deletion")
+        print("  (Use 'expunge' to permanently delete)")
+    }
+    
+    private func expungeMailbox(client: IMAPClient, mailbox: String) async throws {
+        print("Expunging deleted messages from '\(mailbox)'...")
+        try await client.expunge(mailbox: mailbox)
+        print("✓ Deleted messages permanently removed")
     }
 }

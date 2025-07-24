@@ -129,6 +129,11 @@ public final class IMAPEncoder {
             parts.append(sequence.stringValue)
             parts.append(encodeMailboxName(mailbox))
             
+        case .move(let sequence, let mailbox):
+            parts.append("MOVE")
+            parts.append(sequence.stringValue)
+            parts.append(encodeMailboxName(mailbox))
+            
         case .uid(let uidCommand):
             parts.append("UID")
             parts.append(contentsOf: encodeUIDCommand(uidCommand))
@@ -387,6 +392,8 @@ public final class IMAPEncoder {
         switch command {
         case .copy(let sequence, let mailbox):
             return ["COPY", sequence.stringValue, encodeMailboxName(mailbox)]
+        case .move(let sequence, let mailbox):
+            return ["MOVE", sequence.stringValue, encodeMailboxName(mailbox)]
         case .fetch(let sequence, let items):
             return ["FETCH", sequence.stringValue, encodeFetchItems(items)]
         case .search(let charset, let criteria):

@@ -34,6 +34,7 @@ public struct IMAPCommand: Sendable {
         case fetch(sequence: SequenceSet, items: [FetchItem])
         case store(sequence: SequenceSet, flags: StoreFlags, silent: Bool)
         case copy(sequence: SequenceSet, mailbox: String)
+        case move(sequence: SequenceSet, mailbox: String)
         case uid(UIDCommand)
         case idle
         case done
@@ -118,10 +119,16 @@ public struct IMAPCommand: Sendable {
             self.action = action
             self.flags = flags
         }
+        
+        public init(action: Action, flags: [Flag]) {
+            self.action = action
+            self.flags = flags.map { $0.rawValue }
+        }
     }
     
     public enum UIDCommand: Sendable {
         case copy(sequence: SequenceSet, mailbox: String)
+        case move(sequence: SequenceSet, mailbox: String)
         case fetch(sequence: SequenceSet, items: [FetchItem])
         case search(charset: String?, criteria: SearchCriteria)
         case store(sequence: SequenceSet, flags: StoreFlags, silent: Bool)
@@ -146,6 +153,21 @@ public struct IMAPCommand: Sendable {
             case .list(let items):
                 return items.map { $0.stringValue }.joined(separator: ",")
             }
+        }
+        
+        /// Helper method to create a SequenceSet from an array of UIDs
+        public static func set(_ uids: [UInt32]) -> SequenceSet {
+            guard !uids.isEmpty else {
+                return .single(0) // This shouldn't happen in practice
+            }
+            
+            if uids.count == 1 {
+                return .single(uids[0])
+            }
+            
+            // Sort UIDs and create comma-separated list
+            let sorted = uids.sorted()
+            return .list(sorted.map { .single($0) })
         }
     }
 }
