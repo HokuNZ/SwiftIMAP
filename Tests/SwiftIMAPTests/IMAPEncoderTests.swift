@@ -348,4 +348,88 @@ final class IMAPEncoderTests: XCTestCase {
         let unsorted = IMAPCommand.SequenceSet.set([5, 1, 3])
         XCTAssertEqual(unsorted.stringValue, "1,3,5")
     }
+    
+    // MARK: - Search Command Tests
+    
+    func testEncodeSearchWithFrom() throws {
+        let command = IMAPCommand(tag: "A100", command: .search(charset: nil, criteria: .from("alice@example.com")))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A100 SEARCH FROM \"alice@example.com\"\r\n")
+    }
+    
+    func testEncodeSearchWithSubject() throws {
+        let command = IMAPCommand(tag: "A101", command: .search(charset: nil, criteria: .subject("Meeting Tomorrow")))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A101 SEARCH SUBJECT \"Meeting Tomorrow\"\r\n")
+    }
+    
+    func testEncodeSearchWithDateCriteria() throws {
+        // Create a specific date for testing
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        let date = formatter.date(from: "2024-01-15")!
+        
+        let command = IMAPCommand(tag: "A102", command: .search(charset: nil, criteria: .since(date)))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A102 SEARCH SINCE 15-Jan-2024\r\n")
+    }
+    
+    func testEncodeSearchWithMultipleCriteria() throws {
+        let criteria = IMAPCommand.SearchCriteria.and([
+            .from("alice@example.com"),
+            .unseen,
+            .larger(1000)
+        ])
+        
+        let command = IMAPCommand(tag: "A103", command: .search(charset: nil, criteria: criteria))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A103 SEARCH FROM \"alice@example.com\" UNSEEN LARGER 1000\r\n")
+    }
+    
+    func testEncodeSearchWithOR() throws {
+        let criteria = IMAPCommand.SearchCriteria.or(
+            .from("alice@example.com"),
+            .from("bob@example.com")
+        )
+        
+        let command = IMAPCommand(tag: "A104", command: .search(charset: nil, criteria: criteria))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A104 SEARCH OR FROM \"alice@example.com\" FROM \"bob@example.com\"\r\n")
+    }
+    
+    func testEncodeSearchWithNOT() throws {
+        let criteria = IMAPCommand.SearchCriteria.not(.deleted)
+        
+        let command = IMAPCommand(tag: "A105", command: .search(charset: nil, criteria: criteria))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A105 SEARCH NOT DELETED\r\n")
+    }
+    
+    func testEncodeSearchWithCharset() throws {
+        let command = IMAPCommand(tag: "A106", command: .search(charset: "UTF-8", criteria: .text("café")))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A106 SEARCH CHARSET UTF-8 TEXT \"café\"\r\n")
+    }
+    
+    func testEncodeUIDSearchFlaggedCommand() throws {
+        let command = IMAPCommand(tag: "A107", command: .uid(.search(charset: nil, criteria: .flagged)))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+        
+        XCTAssertEqual(result, "A107 UID SEARCH FLAGGED\r\n")
+    }
 }

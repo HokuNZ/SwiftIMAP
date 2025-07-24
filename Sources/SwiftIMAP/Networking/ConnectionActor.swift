@@ -3,6 +3,32 @@ import NIOCore
 import NIOPosix
 import NIOSSL
 
+// Thread-safe mutable state wrapper
+private final class MutableState<T>: @unchecked Sendable {
+    private var _value: T
+    private let lock = NSLock()
+    
+    init(value: T) {
+        self._value = value
+    }
+    
+    var value: T {
+        lock.lock()
+        defer { lock.unlock() }
+        return _value
+    }
+    
+    func compareAndExchange(expected: T, new: T) -> Bool where T: Equatable {
+        lock.lock()
+        defer { lock.unlock() }
+        if _value == expected {
+            _value = new
+            return true
+        }
+        return false
+    }
+}
+
 private func setupChannelPipeline(
     channel: Channel,
     handler: IMAPChannelHandler,
@@ -304,45 +330,43 @@ actor ConnectionActor {
     
     private func waitForGreeting() async throws -> IMAPResponse {
         return try await withCheckedThrowingContinuation { continuation in
-            var resumed = false
+            let resumedState = MutableState(value: false)
+            let greetingState = MutableState(value: false)
+            
             let timeoutTask = Task {
                 try await Task.sleep(nanoseconds: 5_000_000_000)
-                if !resumed {
-                    resumed = true
+                if resumedState.compareAndExchange(expected: false, new: true) {
                     continuation.resume(throwing: IMAPError.timeout)
                 }
             }
             
-            var greetingReceived = false
-            
             channelHandler?.setResponseHandler { [weak self] result in
-                guard !resumed else { return }
+                guard !resumedState.value else { return }
                 
                 switch result {
                 case .success(let responses):
                     // Only handle the first set of responses as greeting
-                    if !greetingReceived {
-                        greetingReceived = true
-                        resumed = true
-                        timeoutTask.cancel()
-                        
-                        if let greeting = responses.first {
-                            // Process any CAPABILITY responses that came with the greeting
-                            Task { @MainActor [weak self] in
-                                for response in responses {
-                                    if case .untagged(.capability(let caps)) = response {
-                                        await self?.updateCapabilities(Set(caps))
+                    if greetingState.compareAndExchange(expected: false, new: true) {
+                        if resumedState.compareAndExchange(expected: false, new: true) {
+                            timeoutTask.cancel()
+                            
+                            if let greeting = responses.first {
+                                // Process any CAPABILITY responses that came with the greeting
+                                Task { [weak self] in
+                                    for response in responses {
+                                        if case .untagged(.capability(let caps)) = response {
+                                            await self?.updateCapabilities(Set(caps))
+                                        }
                                     }
                                 }
+                                continuation.resume(returning: greeting)
+                            } else {
+                                continuation.resume(throwing: IMAPError.protocolError("No greeting received"))
                             }
-                            continuation.resume(returning: greeting)
-                        } else {
-                            continuation.resume(throwing: IMAPError.protocolError("No greeting received"))
                         }
                     }
                 case .failure(let error):
-                    if !resumed {
-                        resumed = true
+                    if resumedState.compareAndExchange(expected: false, new: true) {
                         timeoutTask.cancel()
                         continuation.resume(throwing: error)
                     }
@@ -367,7 +391,7 @@ actor ConnectionActor {
     }
 }
 
-private struct ByteBufferDecoder: ByteToMessageDecoder {
+private struct ByteBufferDecoder: ByteToMessageDecoder, @unchecked Sendable {
     typealias InboundOut = ByteBuffer
     
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {

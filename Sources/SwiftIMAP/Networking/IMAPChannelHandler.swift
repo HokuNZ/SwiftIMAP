@@ -51,7 +51,7 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 }
 
-final class IMAPMessageEncoder: MessageToByteEncoder {
+final class IMAPMessageEncoder: MessageToByteEncoder, @unchecked Sendable {
     typealias OutboundIn = Data
     
     func encode(data: Data, out: inout ByteBuffer) throws {

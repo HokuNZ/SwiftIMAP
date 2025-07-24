@@ -342,9 +342,9 @@ public final class IMAPEncoder {
         case .subject(let text):
             return "SUBJECT \(quote(text, force: true))"
         case .body(let text):
-            return "BODY \(quote(text))"
+            return "BODY \(quote(text, force: true))"
         case .text(let text):
-            return "TEXT \(quote(text))"
+            return "TEXT \(quote(text, force: true))"
         case .header(let field, let value):
             return "HEADER \(quote(field)) \(quote(value))"
         case .larger(let size):

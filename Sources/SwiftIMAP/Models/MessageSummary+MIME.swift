@@ -24,6 +24,8 @@ public struct ParsedMimeMessage {
     public let charset: String?
     public let transferEncoding: String?
     public let parts: [MimePart]
+    public let boundary: String?
+    public let isMultipart: Bool
     
     init(from mime: Mime) {
         // Extract headers from other fields
@@ -37,9 +39,13 @@ public struct ParsedMimeMessage {
         if let contentType = mime.header.contentType {
             self.contentType = contentType.raw
             self.charset = contentType.charset
+            self.boundary = contentType.parameters["boundary"]
+            self.isMultipart = contentType.raw.lowercased().hasPrefix("multipart/")
         } else {
             self.contentType = nil
             self.charset = nil
+            self.boundary = nil
+            self.isMultipart = false
         }
         
         // Extract transfer encoding
@@ -56,22 +62,56 @@ public struct ParsedMimeMessage {
             self.transferEncoding = nil
         }
         
-        // Parse parts based on content
+        // Parse parts recursively
+        self.parts = ParsedMimeMessage.extractParts(from: mime)
+    }
+    
+    /// Recursively extract all parts from a MIME message
+    private static func extractParts(from mime: Mime) -> [MimePart] {
+        var allParts: [MimePart] = []
+        
         switch mime.content {
         case .body(let body):
-            self.parts = [MimePart(body: body, headers: headers, contentType: self.contentType, charset: self.charset, transferEncoding: self.transferEncoding)]
+            // Single body part
+            let parsed = ParsedMimeMessage(from: mime)
+            let part = MimePart(
+                body: body,
+                headers: parsed.headers,
+                contentType: parsed.contentType,
+                charset: parsed.charset,
+                transferEncoding: parsed.transferEncoding,
+                mime: mime
+            )
+            allParts.append(part)
+            
         case .mixed(let mimes), .alternative(let mimes):
-            self.parts = mimes.map { childMime in
-                let parsed = ParsedMimeMessage(from: childMime)
-                return MimePart(
-                    body: childMime.content.extractBody(),
-                    headers: parsed.headers,
-                    contentType: parsed.contentType,
-                    charset: parsed.charset,
-                    transferEncoding: parsed.transferEncoding
-                )
+            // Multipart - recursively extract all parts
+            for childMime in mimes {
+                let childParts = extractParts(from: childMime)
+                allParts.append(contentsOf: childParts)
             }
         }
+        
+        return allParts
+    }
+    
+    /// Get all parts of a specific content type
+    public func parts(withContentType contentType: String) -> [MimePart] {
+        parts.filter { part in
+            part.contentType?.lowercased().hasPrefix(contentType.lowercased()) ?? false
+        }
+    }
+    
+    /// Get the first part matching a content type
+    public func firstPart(withContentType contentType: String) -> MimePart? {
+        parts.first { part in
+            part.contentType?.lowercased().hasPrefix(contentType.lowercased()) ?? false
+        }
+    }
+    
+    /// Get all text parts (both plain and HTML)
+    public var textParts: [MimePart] {
+        parts(withContentType: "text/")
     }
     
     /// Get the plain text content of the message
@@ -101,13 +141,23 @@ public struct ParsedMimeMessage {
     
     /// Get all attachments
     public var attachments: [MimePart] {
-        parts.filter { part in
-            guard let contentType = part.contentType else { return false }
-            
-            // Common attachment content types
-            return !contentType.hasPrefix("text/") ||
-                   part.headers["content-disposition"]?.contains("attachment") ?? false
+        parts.filter { $0.isAttachment }
+    }
+    
+    /// Get all inline parts (e.g., embedded images)
+    public var inlineParts: [MimePart] {
+        parts.filter { $0.isInline }
+    }
+    
+    /// Get all parts grouped by content type
+    public var partsByType: [String: [MimePart]] {
+        var grouped: [String: [MimePart]] = [:]
+        for part in parts {
+            if let mimeType = part.mimeType {
+                grouped[mimeType, default: []].append(part)
+            }
         }
+        return grouped
     }
 }
 
@@ -118,13 +168,19 @@ public struct MimePart {
     public let contentType: String?
     public let charset: String?
     public let transferEncoding: String?
+    public let contentDisposition: String?
+    public let contentID: String?
+    private let mime: Mime?
     
-    init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil) {
+    init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil, mime: Mime? = nil) {
         self.body = body
         self.headers = headers
         self.contentType = contentType ?? headers["content-type"]
         self.charset = charset
         self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"]
+        self.contentDisposition = headers["content-disposition"]
+        self.contentID = headers["content-id"]
+        self.mime = mime
     }
     
     /// Get decoded text content
@@ -141,6 +197,47 @@ public struct MimePart {
     /// Get decoded data content (for attachments)
     public var decodedData: Data? {
         try? body.decodedContentData()
+    }
+    
+    /// Check if this part is an attachment
+    public var isAttachment: Bool {
+        // Check Content-Disposition
+        if let disposition = contentDisposition?.lowercased() {
+            if disposition.contains("attachment") {
+                return true
+            }
+        }
+        
+        // Check if it's not a text type and has a filename
+        if let contentType = contentType?.lowercased() {
+            if !contentType.hasPrefix("text/") && filename != nil {
+                return true
+            }
+            
+            // Common attachment types
+            let attachmentTypes = ["application/", "image/", "video/", "audio/"]
+            for type in attachmentTypes {
+                if contentType.hasPrefix(type) {
+                    return true
+                }
+            }
+        }
+        
+        return false
+    }
+    
+    /// Check if this part is inline (embedded in the message)
+    public var isInline: Bool {
+        contentDisposition?.lowercased().contains("inline") ?? false
+    }
+    
+    /// Get the MIME type without parameters
+    public var mimeType: String? {
+        guard let contentType = contentType else { return nil }
+        if let semicolonIndex = contentType.firstIndex(of: ";") {
+            return String(contentType[..<semicolonIndex]).trimmingCharacters(in: .whitespaces)
+        }
+        return contentType
     }
     
     /// Get the filename if this is an attachment
