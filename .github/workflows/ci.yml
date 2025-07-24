@@ -7,13 +7,13 @@ on:
     branches: [ main ]
 
 env:
-  SWIFT_VERSION: '5.9'
+  SWIFT_VERSION: '5.10'
 
 jobs:
   test-linux:
     runs-on: ubuntu-latest
     container:
-      image: swift:5.9
+      image: swift:5.10
     steps:
     - uses: actions/checkout@v4
     
@@ -75,8 +75,8 @@ jobs:
     - name: Install Swift
       uses: compnerd/gha-setup-swift@main
       with:
-        branch: swift-5.9-release
-        tag: 5.9-RELEASE
+        branch: swift-5.10-release
+        tag: 5.10-RELEASE
     
     - name: Build
       run: swift build -v
@@ -87,7 +87,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     container:
-      image: swift:5.9
+      image: swift:5.10
     steps:
     - uses: actions/checkout@v4
     
