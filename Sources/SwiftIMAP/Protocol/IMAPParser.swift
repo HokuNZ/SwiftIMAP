@@ -257,11 +257,11 @@ public final class IMAPParser {
         // This is simplified - in a real implementation we'd need a proper scanner
         let attrParts = beforeLiteral.split(separator: " ", omittingEmptySubsequences: true)
         
-        for i in 0..<attrParts.count {
-            let part = String(attrParts[i])
+        for index in 0..<attrParts.count {
+            let part = String(attrParts[index])
             
-            if part == "UID" && i + 1 < attrParts.count {
-                if let uid = UInt32(attrParts[i + 1]) {
+            if part == "UID" && index + 1 < attrParts.count {
+                if let uid = UInt32(attrParts[index + 1]) {
                     attributes.append(.uid(uid))
                 }
             } else if part.uppercased().contains("BODY") {

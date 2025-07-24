@@ -635,10 +635,10 @@ public final class IMAPClient: Sendable {
         
         for attribute in attributes {
             switch attribute {
-            case .uid(let u):
-                uid = u
-            case .flags(let f):
-                flags = Set(f.compactMap { Flag(rawValue: $0) })
+            case .uid(let uidValue):
+                uid = uidValue
+            case .flags(let flagValues):
+                flags = Set(flagValues.compactMap { Flag(rawValue: $0) })
             case .internalDate(let date):
                 internalDate = date
             case .rfc822Size(let s):
