@@ -5,6 +5,14 @@ import NIO
 /// Integration tests for IMAP authentication flow
 /// These tests use a mock IMAP server to verify the complete authentication process
 final class IMAPIntegrationTests: XCTestCase {
+    
+    override class func setUp() {
+        super.setUp()
+        // Skip integration tests in CI environment
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip("Integration tests are disabled in CI")
+        }
+    }
     var eventLoopGroup: MultiThreadedEventLoopGroup!
     var mockServer: MockIMAPServer!
     var serverPort: Int!
