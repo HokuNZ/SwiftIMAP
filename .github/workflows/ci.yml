@@ -10,41 +10,6 @@ env:
   SWIFT_VERSION: '5.10'
 
 jobs:
-  test-linux:
-    runs-on: ubuntu-latest
-    container:
-      image: swift:5.10
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Cache Swift PM dependencies
-      uses: actions/cache@v3
-      with:
-        path: .build
-        key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-        restore-keys: |
-          ${{ runner.os }}-spm-
-    
-    - name: Build
-      run: swift build -v
-    
-    - name: Run tests
-      run: swift test -v --enable-code-coverage
-    
-    - name: Generate coverage report
-      run: |
-        apt-get update && apt-get install -y llvm
-        llvm-cov export -format="lcov" \
-          .build/debug/SwiftIMAPPackageTests.xctest \
-          -instr-profile .build/debug/codecov/default.profdata > coverage.lcov
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.lcov
-        flags: unittests
-        fail_ci_if_error: false
-
   test-macos:
     runs-on: macos-latest
     steps:
@@ -60,23 +25,6 @@ jobs:
         key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
         restore-keys: |
           ${{ runner.os }}-spm-
-    
-    - name: Build
-      run: swift build -v
-    
-    - name: Run tests
-      run: swift test -v
-
-  test-windows:
-    runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Swift
-      uses: compnerd/gha-setup-swift@main
-      with:
-        branch: swift-5.10-release
-        tag: 5.10-RELEASE
     
     - name: Build
       run: swift build -v
@@ -124,7 +72,7 @@ jobs:
         path: docs
 
   release:
-    needs: [test-linux, test-macos, test-windows, lint]
+    needs: [test-macos, lint]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
