@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        echo "# Changelog" > CHANGELOG.md
+        git log --pretty=format:"- %s (%h)" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: CHANGELOG.md
+        draft: false
+        prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+        generate_release_notes: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-artifacts:
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: swift-imap-linux-x64
+          - os: macos-latest
+            artifact: swift-imap-macos
+          - os: windows-latest
+            artifact: swift-imap-windows-x64
+    
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Swift (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: compnerd/gha-setup-swift@main
+      with:
+        branch: swift-5.9-release
+        tag: 5.9-RELEASE
+    
+    - name: Build Release Binary
+      run: swift build -c release
+    
+    - name: Package Binary
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          BINARY_PATH=".build/release/swift-imap-tester.exe"
+        else
+          BINARY_PATH=".build/release/swift-imap-tester"
+        fi
+        
+        mkdir -p dist
+        cp $BINARY_PATH dist/
+        cp README.md dist/
+        cp LICENSE dist/ || echo "No LICENSE file"
+        
+        cd dist
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          7z a -tzip ../${{ matrix.artifact }}.zip *
+        else
+          tar -czf ../${{ matrix.artifact }}.tar.gz *
+        fi
+    
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ matrix.artifact }}.tar.gz
+          ${{ matrix.artifact }}.zip
+        token: ${{ secrets.GITHUB_TOKEN }}

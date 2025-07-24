@@ -1,0 +1,204 @@
+import Foundation
+import MimeParser
+
+extension MessageSummary {
+    /// Parse MIME content from the given body data
+    public func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
+        // Convert Data to String for MimeParser
+        guard let bodyString = String(data: bodyData, encoding: .utf8) else {
+            throw IMAPError.parsingError("Failed to decode body data as UTF-8")
+        }
+        
+        // Parse the MIME content
+        let parser = MimeParser()
+        let mime = try parser.parse(bodyString)
+        
+        return ParsedMimeMessage(from: mime)
+    }
+}
+
+/// A parsed MIME message with convenient access to parts
+public struct ParsedMimeMessage {
+    public let headers: [String: String]
+    public let contentType: String?
+    public let charset: String?
+    public let transferEncoding: String?
+    public let parts: [MimePart]
+    
+    init(from mime: Mime) {
+        // Extract headers from other fields
+        var headers: [String: String] = [:]
+        for field in mime.header.other {
+            headers[field.name.lowercased()] = field.body
+        }
+        self.headers = headers
+        
+        // Extract content type info
+        if let contentType = mime.header.contentType {
+            self.contentType = contentType.raw
+            self.charset = contentType.charset
+        } else {
+            self.contentType = nil
+            self.charset = nil
+        }
+        
+        // Extract transfer encoding
+        if let encoding = mime.header.contentTransferEncoding {
+            switch encoding {
+            case .sevenBit: self.transferEncoding = "7bit"
+            case .eightBit: self.transferEncoding = "8bit"
+            case .binary: self.transferEncoding = "binary"
+            case .quotedPrintable: self.transferEncoding = "quoted-printable"
+            case .base64: self.transferEncoding = "base64"
+            case .other(let value): self.transferEncoding = value
+            }
+        } else {
+            self.transferEncoding = nil
+        }
+        
+        // Parse parts based on content
+        switch mime.content {
+        case .body(let body):
+            self.parts = [MimePart(body: body, headers: headers, contentType: self.contentType, charset: self.charset, transferEncoding: self.transferEncoding)]
+        case .mixed(let mimes), .alternative(let mimes):
+            self.parts = mimes.map { childMime in
+                let parsed = ParsedMimeMessage(from: childMime)
+                return MimePart(
+                    body: childMime.content.extractBody(),
+                    headers: parsed.headers,
+                    contentType: parsed.contentType,
+                    charset: parsed.charset,
+                    transferEncoding: parsed.transferEncoding
+                )
+            }
+        }
+    }
+    
+    /// Get the plain text content of the message
+    public var plainTextContent: String? {
+        // First, look for text/plain parts
+        if let plainPart = parts.first(where: { $0.contentType?.hasPrefix("text/plain") ?? false }) {
+            return plainPart.decodedText
+        }
+        
+        // If no text/plain, look for any text part
+        if let textPart = parts.first(where: { $0.contentType?.hasPrefix("text/") ?? false }) {
+            return textPart.decodedText
+        }
+        
+        // If single part message, return its content
+        if parts.count == 1 {
+            return parts[0].decodedText
+        }
+        
+        return nil
+    }
+    
+    /// Get the HTML content of the message
+    public var htmlContent: String? {
+        parts.first(where: { $0.contentType?.hasPrefix("text/html") ?? false })?.decodedText
+    }
+    
+    /// Get all attachments
+    public var attachments: [MimePart] {
+        parts.filter { part in
+            guard let contentType = part.contentType else { return false }
+            
+            // Common attachment content types
+            return !contentType.hasPrefix("text/") ||
+                   part.headers["content-disposition"]?.contains("attachment") ?? false
+        }
+    }
+}
+
+/// A single MIME part
+public struct MimePart {
+    public let body: MimeBody
+    public let headers: [String: String]
+    public let contentType: String?
+    public let charset: String?
+    public let transferEncoding: String?
+    
+    init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil) {
+        self.body = body
+        self.headers = headers
+        self.contentType = contentType ?? headers["content-type"]
+        self.charset = charset
+        self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"]
+    }
+    
+    /// Get decoded text content
+    public var decodedText: String? {
+        do {
+            let decodedData = try body.decodedContentData()
+            return String(data: decodedData, encoding: encoding)
+        } catch {
+            // Fallback to raw content
+            return body.raw
+        }
+    }
+    
+    /// Get decoded data content (for attachments)
+    public var decodedData: Data? {
+        try? body.decodedContentData()
+    }
+    
+    /// Get the filename if this is an attachment
+    public var filename: String? {
+        // Check Content-Disposition header
+        if let disposition = headers["content-disposition"] {
+            if let match = disposition.range(of: #"filename="([^"]+)""#, options: .regularExpression) {
+                let filenameWithQuotes = String(disposition[match])
+                return filenameWithQuotes
+                    .replacingOccurrences(of: "filename=\"", with: "")
+                    .replacingOccurrences(of: "\"", with: "")
+            }
+        }
+        
+        // Check Content-Type header
+        if let contentType = headers["content-type"] {
+            if let match = contentType.range(of: #"name="([^"]+)""#, options: .regularExpression) {
+                let nameWithQuotes = String(contentType[match])
+                return nameWithQuotes
+                    .replacingOccurrences(of: "name=\"", with: "")
+                    .replacingOccurrences(of: "\"", with: "")
+            }
+        }
+        
+        return nil
+    }
+    
+    private var encoding: String.Encoding {
+        guard let charset = charset?.lowercased() else {
+            return .utf8
+        }
+        
+        switch charset {
+        case "utf-8", "utf8":
+            return .utf8
+        case "iso-8859-1", "latin1":
+            return .isoLatin1
+        case "us-ascii", "ascii":
+            return .ascii
+        case "utf-16":
+            return .utf16
+        case "windows-1252", "cp1252":
+            return .windowsCP1252
+        default:
+            return .utf8
+        }
+    }
+}
+
+// Helper extension to extract body from MimeContent
+private extension MimeContent {
+    func extractBody() -> MimeBody {
+        switch self {
+        case .body(let body):
+            return body
+        case .mixed(let mimes), .alternative(let mimes):
+            // Return the first body found
+            return mimes.first?.content.extractBody() ?? MimeBody("")
+        }
+    }
+}

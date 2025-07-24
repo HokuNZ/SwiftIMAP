@@ -1,0 +1,84 @@
+name: Security
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - uses: actions/checkout@v4
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v3
+      with:
+        fail-on-severity: moderate
+
+  swift-package-audit:
+    runs-on: ubuntu-latest
+    container:
+      image: swift:5.9
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check for known vulnerabilities
+      run: |
+        # Update package dependencies
+        swift package update
+        
+        # Check if Package.resolved has changed
+        if ! git diff --quiet Package.resolved; then
+          echo "::warning::Package.resolved has uncommitted changes after update"
+        fi
+        
+        # List all dependencies
+        echo "## Package Dependencies"
+        swift package show-dependencies
+    
+    - name: Security scan with Semgrep
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/swift
+          p/security-audit
+          p/secrets
+
+  codeql-analysis:
+    name: CodeQL Analysis
+    runs-on: macos-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: swift
+        queries: security-and-quality
+    
+    - name: Build
+      run: swift build
+    
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check licenses
+      uses: fossas/fossa-action@v1
+      with:
+        api-key: ${{ secrets.FOSSA_API_KEY }}
+      continue-on-error: true
