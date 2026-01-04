@@ -6,19 +6,15 @@ import NIO
 /// These tests use a mock IMAP server to verify the complete authentication process
 final class IMAPIntegrationTests: XCTestCase {
     
-    override class func setUp() {
-        super.setUp()
-        // Skip integration tests in CI environment
-        if ProcessInfo.processInfo.environment["CI"] != nil {
-            throw XCTSkip("Integration tests are disabled in CI")
-        }
-    }
     var eventLoopGroup: MultiThreadedEventLoopGroup!
     var mockServer: MockIMAPServer!
     var serverPort: Int!
     
     override func setUp() async throws {
         try await super.setUp()
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip("Integration tests are disabled in CI")
+        }
         eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         mockServer = MockIMAPServer(eventLoopGroup: eventLoopGroup)
         serverPort = try await mockServer.start()
@@ -54,7 +50,11 @@ final class IMAPIntegrationTests: XCTestCase {
         // Verify server received correct commands
         let commands = mockServer.receivedCommands
         XCTAssertTrue(commands.contains { $0.contains("CAPABILITY") })
-        XCTAssertTrue(commands.contains { $0.contains("LOGIN testuser testpass") })
+        XCTAssertTrue(commands.contains { command in
+            command.uppercased().contains("LOGIN") &&
+            command.contains("testuser") &&
+            command.contains("testpass")
+        })
         
         // Disconnect
         await client.disconnect()
@@ -86,6 +86,105 @@ final class IMAPIntegrationTests: XCTestCase {
         
         // Disconnect
         await client.disconnect()
+    }
+
+    func testPreauthGreetingSkipsAuthentication() async throws {
+        mockServer.responses["GREETING"] = "* PREAUTH IMAP4rev1"
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=PLAIN")
+        
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass"),
+            logLevel: .debug
+        )
+        
+        let client = IMAPClient(configuration: config)
+        
+        try await client.connect()
+        
+        let commands = mockServer.receivedCommands
+        XCTAssertFalse(commands.contains { $0.uppercased().contains("LOGIN") })
+        XCTAssertFalse(commands.contains { $0.uppercased().contains("AUTHENTICATE") })
+        
+        await client.disconnect()
+    }
+
+    func testExternalAuthenticationContinuation() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=EXTERNAL")
+        mockServer.setResponse(for: "AUTHENTICATE EXTERNAL", response: "+")
+        mockServer.setAuthenticateResponse("OK AUTHENTICATE completed")
+        
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .external,
+            logLevel: .debug
+        )
+        
+        let client = IMAPClient(configuration: config)
+        
+        try await client.connect()
+        
+        let commands = mockServer.receivedCommands
+        XCTAssertTrue(commands.contains { $0.uppercased().contains("AUTHENTICATE EXTERNAL") })
+        
+        await client.disconnect()
+    }
+
+    func testAuthenticatePlainHandlesMultipleChallenges() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=PLAIN")
+        mockServer.setAuthenticateChallenges(["first", "second"])
+        mockServer.setAuthenticateResponse("OK AUTHENTICATE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .plain(username: "testuser", password: "testpass"),
+            logLevel: .debug
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+
+        let expectedAuth = Data("\0testuser\0testpass".utf8).base64EncodedString()
+        XCTAssertEqual(mockServer.receivedContinuations.first ?? "", expectedAuth)
+        XCTAssertEqual(mockServer.receivedContinuations.last ?? "", "")
+
+        await client.disconnect()
+    }
+
+    func testLoginDisabledCapabilityBlocksLogin() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGINDISABLED")
+        
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass"),
+            logLevel: .debug
+        )
+        
+        let client = IMAPClient(configuration: config)
+        
+        do {
+            try await client.connect()
+            XCTFail("Expected LOGINDISABLED to block LOGIN")
+        } catch {
+            if case IMAPError.unsupportedCapability(let capability) = error {
+                XCTAssertEqual(capability, "LOGINDISABLED")
+            } else {
+                XCTFail("Expected unsupportedCapability error")
+            }
+        }
+        
+        let commands = mockServer.receivedCommands
+        XCTAssertTrue(commands.contains { $0.uppercased().contains("CAPABILITY") })
+        XCTAssertFalse(commands.contains { $0.uppercased().contains("LOGIN") })
     }
     
     func testAuthenticationFailure() async throws {
@@ -131,11 +230,19 @@ final class IMAPIntegrationTests: XCTestCase {
         // Test that connection times out
         do {
             try await client.connect()
-            XCTFail("Expected connection to timeout")
+            XCTFail("Expected connection to fail")
         } catch {
-            // Expected timeout error
-            XCTAssertTrue(error.localizedDescription.contains("timeout") || 
-                         error.localizedDescription.contains("connect"))
+            if let imapError = error as? IMAPError {
+                switch imapError {
+                case .timeout, .connectionFailed, .connectionError:
+                    break
+                default:
+                    XCTFail("Unexpected error: \(imapError)")
+                }
+            } else {
+                XCTAssertTrue(error.localizedDescription.contains("timeout") ||
+                              error.localizedDescription.contains("connect"))
+            }
         }
     }
     
@@ -143,7 +250,7 @@ final class IMAPIntegrationTests: XCTestCase {
         // Configure mock server
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT INBOX", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
         
         let config = IMAPConfiguration(
             hostname: "localhost",
@@ -176,21 +283,18 @@ final class IMAPIntegrationTests: XCTestCase {
         // Configure mock server with complete flow
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT INBOX", response: """
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: """
             * 42 EXISTS
             * 1 RECENT
             * OK [UNSEEN 1]
             * OK [UIDVALIDITY 1234567890]
             * OK [UIDNEXT 43]
-            OK [READ-WRITE] SELECT completed
             """)
-        mockServer.setResponse(for: "UID SEARCH ALL", response: """
+        mockServer.setResponse(for: "SEARCH ALL", response: """
             * SEARCH 1 2 3
-            OK SEARCH completed
             """)
-        mockServer.setResponse(for: "UID FETCH 1", response: """
+        mockServer.setResponse(for: "UID FETCH", response: """
             * 1 FETCH (UID 1 FLAGS (\\Seen) INTERNALDATE "01-Jan-2024 12:00:00 +0000" RFC822.SIZE 1234 ENVELOPE ("Mon, 1 Jan 2024 12:00:00 +0000" "Test Subject" (("Test Sender" NIL "sender" "example.com")) NIL NIL (("Test Recipient" NIL "recipient" "example.com")) NIL NIL NIL "<message-id@example.com>"))
-            OK FETCH completed
             """)
         
         let config = IMAPConfiguration(
@@ -231,7 +335,11 @@ class MockIMAPServer {
     private var channel: Channel?
     var responses: [String: String] = [:]
     private var authenticateResponse: String?
+    private var authenticateChallenges: [String] = []
+    private var pendingAuthTag: String?
+    private var pendingAuthChallenges: [String] = []
     private(set) var receivedCommands: [String] = []
+    private(set) var receivedContinuations: [String] = []
     
     init(eventLoopGroup: EventLoopGroup) {
         self.eventLoopGroup = eventLoopGroup
@@ -245,6 +353,10 @@ class MockIMAPServer {
     
     func setAuthenticateResponse(_ response: String) {
         authenticateResponse = response
+    }
+
+    func setAuthenticateChallenges(_ challenges: [String]) {
+        authenticateChallenges = challenges
     }
     
     func start() async throws -> Int {
@@ -273,34 +385,93 @@ class MockIMAPServer {
     }
     
     func handleCommand(_ command: String) -> String {
-        receivedCommands.append(command)
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        receivedCommands.append(trimmed)
+
+        if let pendingTag = pendingAuthTag {
+            receivedContinuations.append(trimmed)
+            if !pendingAuthChallenges.isEmpty {
+                let challenge = pendingAuthChallenges.removeFirst()
+                return challenge.isEmpty ? "+" : "+ \(challenge)"
+            }
+            pendingAuthTag = nil
+            return formatAuthenticateResponse(tag: pendingTag)
+        }
+        
+        guard !trimmed.isEmpty else {
+            return "* BAD Empty command"
+        }
         
         // Extract tag and command
-        let parts = command.split(separator: " ", maxSplits: 2)
+        let parts = trimmed.split(separator: " ", maxSplits: 2)
         guard parts.count >= 2 else {
             return "* BAD Invalid command"
         }
         
         let tag = String(parts[0])
         let cmd = String(parts[1]).uppercased()
+        let remainder = parts.count > 2 ? String(parts[2]) : ""
+        let commandAndArgs = String(trimmed.dropFirst(tag.count + 1))
+        let remainderParts = remainder.split(separator: " ", maxSplits: 1)
+        let subcommandKey = remainderParts.first.map { "\(cmd) \(String($0))" }
         
-        // Handle authentication continuation
-        if cmd == "AUTHENTICATE" && parts.count > 2 {
-            return responses["AUTHENTICATE PLAIN"] ?? "+"
-        }
-        
-        // Handle base64 auth data
-        if command.trimmingCharacters(in: .whitespacesAndNewlines).allSatisfy({ $0.isLetter || $0.isNumber || $0 == "=" || $0 == "+" || $0 == "/" }) {
-            return authenticateResponse ?? "\(tag) OK Authentication completed"
+        if cmd == "AUTHENTICATE" {
+            let remainderParts = remainder.split(separator: " ", maxSplits: 1)
+            let mechanism = remainderParts.first.map { String($0).uppercased() } ?? ""
+            let hasInitialResponse = remainderParts.count > 1
+
+            if !authenticateChallenges.isEmpty {
+                pendingAuthTag = tag
+                pendingAuthChallenges = authenticateChallenges
+                let challenge = pendingAuthChallenges.removeFirst()
+                return challenge.isEmpty ? "+" : "+ \(challenge)"
+            }
+
+            if hasInitialResponse {
+                return formatAuthenticateResponse(tag: tag)
+            }
+
+            pendingAuthTag = tag
+            return responses["AUTHENTICATE \(mechanism)"] ?? "+"
         }
         
         // Find response for command
-        if let response = responses[cmd] {
-            return "\(response)\r\n\(tag) \(response.contains("OK") ? "OK" : "NO") \(cmd) completed"
+        if let response = responses[commandAndArgs]
+            ?? responses[commandAndArgs.uppercased()]
+            ?? subcommandKey.flatMap({ responses[$0] ?? responses[$0.uppercased()] })
+            ?? responses[cmd] {
+            if response.hasPrefix("*") || response.hasPrefix("+") {
+                return "\(response)\r\n\(tag) OK \(cmd) completed"
+            }
+            
+            let upper = response.uppercased()
+            if upper.hasPrefix("OK") || upper.hasPrefix("NO") || upper.hasPrefix("BAD") {
+                return "\(tag) \(response)"
+            }
+            
+            return "\(tag) OK \(response)"
         }
         
         // Default response
         return "\(tag) OK \(cmd) completed"
+    }
+    
+    var isAwaitingContinuation: Bool {
+        pendingAuthTag != nil
+    }
+    
+    private func formatAuthenticateResponse(tag: String) -> String {
+        let response = authenticateResponse ?? "OK AUTHENTICATE completed"
+        
+        if response.hasPrefix("*") {
+            return "\(response)\r\n\(tag) OK AUTHENTICATE completed"
+        }
+        
+        if response.uppercased().hasPrefix("\(tag) ") {
+            return response
+        }
+        
+        return "\(tag) \(response)"
     }
 }
 
@@ -310,7 +481,14 @@ class MockIMAPDecoder: ByteToMessageDecoder {
     typealias InboundOut = String
     
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        guard let line = buffer.readString(length: buffer.readableBytes) else {
+        let view = buffer.readableBytesView
+        guard let lfIndex = view.firstIndex(of: UInt8(ascii: "\n")) else {
+            return .needMoreData
+        }
+        
+        let length = view.distance(from: view.startIndex, to: lfIndex) + 1
+        guard var lineBuffer = buffer.readSlice(length: length),
+              let line = lineBuffer.readString(length: lineBuffer.readableBytes) else {
             return .needMoreData
         }
         
@@ -323,8 +501,10 @@ class MockIMAPEncoder: MessageToByteEncoder {
     typealias OutboundIn = String
     
     func encode(data: String, out: inout ByteBuffer) throws {
-        out.writeString(data)
-        if !data.hasSuffix("\r\n") {
+        let normalized = data.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n", with: "\r\n")
+        out.writeString(normalized)
+        if !normalized.hasSuffix("\r\n") {
             out.writeString("\r\n")
         }
     }
@@ -349,10 +529,13 @@ class MockIMAPHandler: ChannelInboundHandler {
     }
     
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let command = unwrapInboundIn(data).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return }
+        let rawCommand = unwrapInboundIn(data)
+        let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        if command.isEmpty && (server?.isAwaitingContinuation != true) {
+            return
+        }
         
-        if let response = server?.handleCommand(command) {
+        if let response = server?.handleCommand(rawCommand) {
             context.writeAndFlush(wrapOutboundOut(response), promise: nil)
         }
     }

@@ -156,6 +156,36 @@ final class IMAPParserTests: XCTestCase {
             XCTFail("Expected LIST response")
         }
     }
+
+    func testParseListResponseWithLiteralMailbox() throws {
+        let input = "* LIST (\\HasNoChildren) \"/\" {5}\r\nINBOX\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        XCTAssertEqual(responses.count, 1)
+        if case .untagged(.list(let listResponse)) = responses[0] {
+            XCTAssertEqual(listResponse.attributes, ["\\HasNoChildren"])
+            XCTAssertEqual(listResponse.delimiter, "/")
+            XCTAssertEqual(listResponse.name, "INBOX")
+        } else {
+            XCTFail("Expected LIST response")
+        }
+    }
+
+    func testParseQuotedStringWithEscapes() throws {
+        let input = "* LIST (\\HasNoChildren) \"/\" \"Folder\\\\\\\"Name\"\r\n"
+        parser.append(Data(input.utf8))
+        
+        let responses = try parser.parseResponses()
+        
+        XCTAssertEqual(responses.count, 1)
+        if case .untagged(.list(let listResponse)) = responses[0] {
+            XCTAssertEqual(listResponse.name, "Folder\\\"Name")
+        } else {
+            XCTFail("Expected LIST response")
+        }
+    }
     
     func testParseSearchResponse() throws {
         let input = "* SEARCH 2 3 6 9 12 15\r\n"
@@ -183,6 +213,58 @@ final class IMAPParserTests: XCTestCase {
         } else {
             XCTFail("Expected SEARCH response")
         }
+    }
+
+    func testParseBodyStructureMultipartFields() throws {
+        let input = "* 1 FETCH (BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 1152 23 NIL NIL NIL NIL) (\"TEXT\" \"HTML\" (\"CHARSET\" \"UTF-8\") NIL NIL \"QUOTED-PRINTABLE\" 2048 45 NIL NIL NIL NIL) \"MIXED\" (\"BOUNDARY\" \"abc\") (\"INLINE\" (\"FILENAME\" \"demo\")) (\"EN\" \"US\") \"loc\" (\"EXT\" \"VALUE\")))\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard let bodyStructure = attributes.compactMap({
+            if case .bodyStructure(let data) = $0 { return data }
+            return nil
+        }).first else {
+            return XCTFail("Expected BODYSTRUCTURE attribute")
+        }
+
+        XCTAssertEqual(bodyStructure.subtype, "MIXED")
+        XCTAssertEqual(bodyStructure.parameters?["boundary"], "abc")
+        XCTAssertEqual(bodyStructure.disposition?.type, "INLINE")
+        XCTAssertEqual(bodyStructure.disposition?.parameters?["filename"], "demo")
+        XCTAssertEqual(bodyStructure.language ?? [], ["EN", "US"])
+        XCTAssertEqual(bodyStructure.location, "loc")
+        XCTAssertEqual(bodyStructure.extensions ?? [], ["(EXT VALUE)"])
+        XCTAssertEqual(bodyStructure.parts?.count, 2)
+    }
+
+    func testParseBodyStructureSinglePartExtensions() throws {
+        let input = "* 1 FETCH (BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 12 1 \"md5hash\" (\"ATTACHMENT\" (\"FILENAME\" \"a.txt\")) \"EN\" \"loc\" (\"X\" \"Y\")))\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard let bodyStructure = attributes.compactMap({
+            if case .bodyStructure(let data) = $0 { return data }
+            return nil
+        }).first else {
+            return XCTFail("Expected BODYSTRUCTURE attribute")
+        }
+
+        XCTAssertEqual(bodyStructure.md5, "md5hash")
+        XCTAssertEqual(bodyStructure.disposition?.type, "ATTACHMENT")
+        XCTAssertEqual(bodyStructure.disposition?.parameters?["filename"], "a.txt")
+        XCTAssertEqual(bodyStructure.language ?? [], ["EN"])
+        XCTAssertEqual(bodyStructure.location, "loc")
+        XCTAssertEqual(bodyStructure.extensions ?? [], ["(X Y)"])
     }
     
     func testParseFetchResponse() throws {
@@ -266,6 +348,43 @@ final class IMAPParserTests: XCTestCase {
             XCTAssertEqual(text, "Ready for additional command text")
         } else {
             XCTFail("Expected continuation response")
+        }
+    }
+    
+    func testParseEmptyContinuationResponse() throws {
+        let input = "+\r\n"
+        parser.append(Data(input.utf8))
+        
+        let responses = try parser.parseResponses()
+        
+        XCTAssertEqual(responses.count, 1)
+        if case .continuation(let text) = responses[0] {
+            XCTAssertEqual(text, "")
+        } else {
+            XCTFail("Expected continuation response")
+        }
+    }
+    
+    func testParsePreauthWithCapabilityResponseCode() throws {
+        let input = "* PREAUTH [CAPABILITY IMAP4rev1 AUTH=PLAIN] Ready\r\n"
+        parser.append(Data(input.utf8))
+        
+        let responses = try parser.parseResponses()
+        
+        XCTAssertEqual(responses.count, 1)
+        if case .untagged(.status(let status)) = responses[0] {
+            if case .preauth(let code, let text) = status {
+                if case .capability(let caps) = code {
+                    XCTAssertEqual(caps, ["IMAP4rev1", "AUTH=PLAIN"])
+                } else {
+                    XCTFail("Expected CAPABILITY response code")
+                }
+                XCTAssertEqual(text, "Ready")
+            } else {
+                XCTFail("Expected PREAUTH status")
+            }
+        } else {
+            XCTFail("Expected status response")
         }
     }
     

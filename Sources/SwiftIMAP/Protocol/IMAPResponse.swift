@@ -9,8 +9,8 @@ public enum IMAPResponse: Sendable, Equatable {
         case ok(ResponseCode?, String?)
         case no(ResponseCode?, String?)
         case bad(ResponseCode?, String?)
-        case preauth(String?)
-        case bye(String?)
+        case preauth(ResponseCode?, String?)
+        case bye(ResponseCode?, String?)
     }
     
     public enum UntaggedResponse: Sendable, Equatable {

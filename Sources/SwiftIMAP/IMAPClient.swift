@@ -18,19 +18,35 @@ public final class IMAPClient: Sendable {
     
     public func connect() async throws {
         try await retryHandler.execute(operation: "connect") {
-            try await self.connection.connect()
+            let greeting = try await self.connection.connect()
+            let preauthenticated = {
+                if case .untagged(.status(.preauth(_, _))) = greeting {
+                    return true
+                }
+                return false
+            }()
+            
+            if case .untagged(.status(.bye(_, _))) = greeting {
+                throw IMAPError.connectionClosed
+            }
             
             let capabilities = try await self.capability()
             
             if self.configuration.tlsMode == .startTLS {
+                if preauthenticated {
+                    throw IMAPError.invalidState("STARTTLS not permitted after PREAUTH")
+                }
                 if capabilities.contains("STARTTLS") {
                     try await self.startTLS()
+                    _ = try await self.capability()
                 } else {
                     throw IMAPError.unsupportedCapability("STARTTLS")
                 }
             }
             
-            try await self.authenticate()
+            if !preauthenticated {
+                try await self.authenticate()
+            }
         }
     }
     
@@ -58,12 +74,13 @@ public final class IMAPClient: Sendable {
         
         for response in responses {
             if case .untagged(.list(let listResponse)) = response {
+                let decodedName = IMAPMailboxNameCodec.decode(listResponse.name)
                 let attributes = Set(listResponse.attributes.compactMap { attr in
                     Mailbox.Attribute(rawValue: attr)
                 })
                 
                 let mailbox = Mailbox(
-                    name: listResponse.name,
+                    name: decodedName,
                     attributes: attributes,
                     delimiter: listResponse.delimiter
                 )
@@ -72,6 +89,20 @@ public final class IMAPClient: Sendable {
         }
         
         return mailboxes
+    }
+
+    // MARK: - Mailbox Management
+
+    public func createMailbox(_ mailbox: String) async throws {
+        _ = try await connection.sendCommand(.create(mailbox: mailbox))
+    }
+
+    public func deleteMailbox(_ mailbox: String) async throws {
+        _ = try await connection.sendCommand(.delete(mailbox: mailbox))
+    }
+
+    public func renameMailbox(from sourceMailbox: String, to destinationMailbox: String) async throws {
+        _ = try await connection.sendCommand(.rename(from: sourceMailbox, to: destinationMailbox))
     }
     
     public func selectMailbox(_ mailbox: String) async throws -> MailboxStatus {
@@ -424,6 +455,30 @@ public final class IMAPClient: Sendable {
     }
     
     // MARK: - Message Manipulation
+
+    public func appendMessage(
+        _ messageData: Data,
+        to mailbox: String,
+        flags: [Flag]? = nil,
+        date: Date? = nil
+    ) async throws {
+        let flagStrings = flags?.map { $0.rawValue }
+        _ = try await connection.sendCommand(
+            .append(mailbox: mailbox, flags: flagStrings, date: date, data: messageData)
+        )
+    }
+
+    public func appendMessage(
+        _ message: String,
+        to mailbox: String,
+        flags: [Flag]? = nil,
+        date: Date? = nil
+    ) async throws {
+        guard let data = message.data(using: .utf8) else {
+            throw IMAPError.invalidArgument("Message must be UTF-8")
+        }
+        try await appendMessage(data, to: mailbox, flags: flags, date: date)
+    }
     
     /// Store flags for a message (e.g., mark as read, flagged, etc.)
     public func storeFlags(
@@ -576,6 +631,11 @@ public final class IMAPClient: Sendable {
     }
     
     private func authenticateLogin(username: String, password: String) async throws {
+        let capabilities = await connection.getCapabilities()
+        if capabilities.contains("LOGINDISABLED") {
+            throw IMAPError.unsupportedCapability("LOGINDISABLED")
+        }
+        
         _ = try await connection.sendCommand(.login(username: username, password: password))
         await connection.setAuthenticated()
     }
@@ -587,10 +647,21 @@ public final class IMAPClient: Sendable {
         }
         
         let base64Auth = authData.base64EncodedString()
+        let supportsSaslIR = await supportsSaslInitialResponse()
         
-        _ = try await connection.sendCommand(
-            .authenticate(mechanism: "PLAIN", initialResponse: base64Auth)
-        )
+        let continuationHandler = makeSaslContinuationHandler(initialResponse: supportsSaslIR ? nil : base64Auth)
+
+        if supportsSaslIR {
+            _ = try await connection.sendCommand(
+                .authenticate(mechanism: "PLAIN", initialResponse: base64Auth),
+                continuationHandler: continuationHandler
+            )
+        } else {
+            _ = try await connection.sendCommand(
+                .authenticate(mechanism: "PLAIN", initialResponse: nil),
+                continuationHandler: continuationHandler
+            )
+        }
         await connection.setAuthenticated()
     }
     
@@ -601,26 +672,56 @@ public final class IMAPClient: Sendable {
         }
         
         let base64Auth = authData.base64EncodedString()
+        let supportsSaslIR = await supportsSaslInitialResponse()
         
-        _ = try await connection.sendCommand(
-            .authenticate(mechanism: "XOAUTH2", initialResponse: base64Auth)
-        )
+        let continuationHandler = makeSaslContinuationHandler(initialResponse: supportsSaslIR ? nil : base64Auth)
+
+        if supportsSaslIR {
+            _ = try await connection.sendCommand(
+                .authenticate(mechanism: "XOAUTH2", initialResponse: base64Auth),
+                continuationHandler: continuationHandler
+            )
+        } else {
+            _ = try await connection.sendCommand(
+                .authenticate(mechanism: "XOAUTH2", initialResponse: nil),
+                continuationHandler: continuationHandler
+            )
+        }
         await connection.setAuthenticated()
     }
     
     private func authenticateExternal() async throws {
+        let continuationHandler = makeSaslContinuationHandler(initialResponse: "")
         _ = try await connection.sendCommand(
-            .authenticate(mechanism: "EXTERNAL", initialResponse: nil)
+            .authenticate(mechanism: "EXTERNAL", initialResponse: nil),
+            continuationHandler: continuationHandler
         )
         await connection.setAuthenticated()
     }
     
     private func startTLS() async throws {
         _ = try await connection.sendCommand(.starttls)
+        try await connection.startTLS()
     }
     
     private func logout() async throws {
         _ = try await connection.sendCommand(.logout)
+    }
+
+    private func supportsSaslInitialResponse() async -> Bool {
+        let capabilities = await connection.getCapabilities()
+        return capabilities.contains("SASL-IR")
+    }
+
+    private func makeSaslContinuationHandler(initialResponse: String?) -> (String?) -> String? {
+        var didSendInitial = false
+        return { _ in
+            if let initialResponse, !didSendInitial {
+                didSendInitial = true
+                return initialResponse
+            }
+            return ""
+        }
     }
     
     private func parseMessageSummary(

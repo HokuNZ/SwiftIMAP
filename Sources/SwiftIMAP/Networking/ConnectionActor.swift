@@ -81,6 +81,7 @@ actor ConnectionActor {
     
     private var commandTag = 0
     private var pendingCommands: [String: PendingCommand] = [:]
+    private var pendingContinuationTag: String?
     private var connectionState: ConnectionState = .disconnected
     private var serverCapabilities: Set<String> = []
     
@@ -88,6 +89,9 @@ actor ConnectionActor {
         let command: IMAPCommand
         let continuation: CheckedContinuation<[IMAPResponse], Error>
         var responses: [IMAPResponse] = []
+        var continuationSequence: [Data]
+        var continuationHandler: ((String?) -> Data?)?
+        let timeoutTask: Task<Void, Never>
     }
     
     private enum ConnectionState: Equatable {
@@ -104,7 +108,7 @@ actor ConnectionActor {
         self.logger = Logger(label: "ConnectionActor", level: configuration.logLevel)
     }
     
-    func connect() async throws {
+    func connect() async throws -> IMAPResponse {
         guard case .disconnected = connectionState else {
             throw IMAPError.invalidState("Already connected or connecting")
         }
@@ -149,6 +153,10 @@ actor ConnectionActor {
             let greeting = try await waitForGreeting()
             logger.log(level: .debug, "Received greeting: \(greeting)")
             
+            if case .untagged(.status(.preauth(_, _))) = greeting {
+                connectionState = .authenticated
+            }
+            
             // Now set the regular response handler after greeting is received
             channelHandler.setResponseHandler { [weak self] result in
                 Task { [weak self] in
@@ -156,6 +164,7 @@ actor ConnectionActor {
                 }
             }
             
+            return greeting
         } catch {
             connectionState = .disconnected
             await cleanup()
@@ -174,9 +183,29 @@ actor ConnectionActor {
         await cleanup()
     }
     
-    func sendCommand(_ command: IMAPCommand.Command) async throws -> [IMAPResponse] {
+    func startTLS() async throws {
+        guard let channel = channel else {
+            throw IMAPError.disconnected
+        }
+        
+        do {
+            let sslHandler = try makeTLSHandler(hostname: configuration.hostname)
+            try await channel.pipeline.addHandler(sslHandler, position: .first).get()
+        } catch {
+            throw IMAPError.tlsError(error.localizedDescription)
+        }
+    }
+    
+    func sendCommand(
+        _ command: IMAPCommand.Command,
+        continuationResponse: String? = nil,
+        continuationHandler: ((String?) -> String?)? = nil
+    ) async throws -> [IMAPResponse] {
         guard connectionState != .disconnected && connectionState != .connecting else {
             throw IMAPError.invalidState("Not connected")
+        }
+        guard pendingContinuationTag == nil else {
+            throw IMAPError.invalidState("Command continuation pending")
         }
         
         let tag = nextTag()
@@ -184,7 +213,12 @@ actor ConnectionActor {
         
         return try await withCheckedThrowingContinuation { continuation in
             Task {
-                await self.sendCommandInternal(imapCommand, continuation: continuation)
+                await self.sendCommandInternal(
+                    imapCommand,
+                    continuationResponse: continuationResponse,
+                    continuationHandler: continuationHandler,
+                    continuation: continuation
+                )
             }
         }
     }
@@ -237,29 +271,78 @@ actor ConnectionActor {
         return String(format: "A%04d", commandTag)
     }
     
-    private func sendCommandInternal(_ command: IMAPCommand, continuation: CheckedContinuation<[IMAPResponse], Error>) async {
+    private func sendCommandInternal(
+        _ command: IMAPCommand,
+        continuationResponse: String?,
+        continuationHandler: ((String?) -> String?)?,
+        continuation: CheckedContinuation<[IMAPResponse], Error>
+    ) async {
         do {
-            let data = try encoder.encode(command)
+            let encoded = try encoder.encodeCommandSegments(command)
             
             guard let channel = channel else {
                 continuation.resume(throwing: IMAPError.disconnected)
                 return
             }
+
+            let crlf = Data([0x0D, 0x0A])
+            var continuationSequence = encoded.continuationSegments
+            var continuationHandlerData: ((String?) -> Data?)?
+
+            if let continuationResponse = continuationResponse {
+                guard continuationSequence.isEmpty else {
+                    continuation.resume(throwing: IMAPError.invalidState("Literal continuation already configured"))
+                    return
+                }
+                guard continuationHandler == nil else {
+                    continuation.resume(throwing: IMAPError.invalidState("Multiple continuation handlers configured"))
+                    return
+                }
+                var data = Data(continuationResponse.utf8)
+                data.append(crlf)
+                continuationSequence = [data]
+            }
+
+            if let continuationHandler = continuationHandler {
+                guard continuationSequence.isEmpty else {
+                    continuation.resume(throwing: IMAPError.invalidState("Literal continuation already configured"))
+                    return
+                }
+                continuationHandlerData = { responseText in
+                    guard let response = continuationHandler(responseText) else {
+                        return nil
+                    }
+                    var data = Data(response.utf8)
+                    data.append(crlf)
+                    return data
+                }
+            }
+
+            if !continuationSequence.isEmpty || continuationHandlerData != nil {
+                guard pendingContinuationTag == nil else {
+                    continuation.resume(throwing: IMAPError.invalidState("Another command is awaiting continuation"))
+                    return
+                }
+                pendingContinuationTag = command.tag
+            }
             
-            pendingCommands[command.tag] = PendingCommand(command: command, continuation: continuation)
+            let timeoutNanoseconds = UInt64(configuration.commandTimeout * 1_000_000_000)
+            let timeoutTask = Task { [commandTag = command.tag] in
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                await self.handleTimeout(for: commandTag)
+            }
+            
+            pendingCommands[command.tag] = PendingCommand(
+                command: command,
+                continuation: continuation,
+                continuationSequence: continuationSequence,
+                continuationHandler: continuationHandlerData,
+                timeoutTask: timeoutTask
+            )
             
             logger.log(level: .debug, "Sending command \(command.tag): \(command.command)")
             
-            try await channel.writeAndFlush(data)
-            
-            Task {
-                try await Task.sleep(nanoseconds: UInt64(configuration.commandTimeout * 1_000_000_000))
-                if pendingCommands[command.tag] != nil {
-                    pendingCommands[command.tag] = nil
-                    continuation.resume(throwing: IMAPError.timeout)
-                }
-            }
-            
+            try await channel.writeAndFlush(encoded.initialData)
         } catch {
             continuation.resume(throwing: error)
         }
@@ -273,9 +356,11 @@ actor ConnectionActor {
             }
         case .failure(let error):
             for (_, pending) in pendingCommands {
+                pending.timeoutTask.cancel()
                 pending.continuation.resume(throwing: error)
             }
             pendingCommands.removeAll()
+            pendingContinuationTag = nil
         }
     }
     
@@ -286,6 +371,11 @@ actor ConnectionActor {
         case .tagged(let tag, let status):
             if var pending = pendingCommands[tag] {
                 pendingCommands[tag] = nil
+                pending.timeoutTask.cancel()
+                if pendingContinuationTag == tag {
+                    pendingContinuationTag = nil
+                }
+                updateCapabilitiesIfPresent(status)
                 
                 switch status {
                 case .ok:
@@ -308,6 +398,8 @@ actor ConnectionActor {
             switch untagged {
             case .capability(let caps):
                 serverCapabilities = Set(caps)
+            case .status(let status):
+                updateCapabilitiesIfPresent(status)
             default:
                 break
             }
@@ -323,8 +415,8 @@ actor ConnectionActor {
                 }
             }
             
-        case .continuation:
-            break
+        case .continuation(let text):
+            await handleContinuationResponse(text)
         }
     }
     
@@ -356,6 +448,8 @@ actor ConnectionActor {
                                     for response in responses {
                                         if case .untagged(.capability(let caps)) = response {
                                             await self?.updateCapabilities(Set(caps))
+                                        } else if case .untagged(.status(let status)) = response {
+                                            await self?.updateCapabilitiesIfPresent(status)
                                         }
                                     }
                                 }
@@ -385,9 +479,107 @@ actor ConnectionActor {
         }
         
         for (_, pending) in pendingCommands {
+            pending.timeoutTask.cancel()
             pending.continuation.resume(throwing: IMAPError.disconnected)
         }
         pendingCommands.removeAll()
+        pendingContinuationTag = nil
+    }
+}
+
+private extension ConnectionActor {
+    func makeTLSHandler(hostname: String) throws -> NIOSSLClientHandler {
+        var tlsConfig = NIOSSL.TLSConfiguration.makeClientConfiguration()
+        tlsConfig.trustRoots = tlsConfiguration.trustRoots
+        tlsConfig.certificateVerification = tlsConfiguration.certificateVerification
+        tlsConfig.minimumTLSVersion = tlsConfiguration.minimumTLSVersion
+        
+        let sslContext = try NIOSSLContext(configuration: tlsConfig)
+        return try NIOSSLClientHandler(
+            context: sslContext,
+            serverHostname: tlsConfiguration.hostnameOverride ?? hostname
+        )
+    }
+    
+    func handleContinuationResponse(_ responseText: String) async {
+        guard let tag = pendingContinuationTag,
+              var pending = pendingCommands[tag] else {
+            return
+        }
+
+        let challenge = responseText.isEmpty ? nil : responseText
+
+        if !pending.continuationSequence.isEmpty {
+            let data = pending.continuationSequence.removeFirst()
+            pendingCommands[tag] = pending
+
+            do {
+                try await channel?.writeAndFlush(data)
+            } catch {
+                pending.timeoutTask.cancel()
+                pendingCommands[tag] = nil
+                pending.continuation.resume(throwing: error)
+            }
+
+            if pending.continuationSequence.isEmpty && pending.continuationHandler == nil {
+                pendingContinuationTag = nil
+            }
+            return
+        }
+
+        if let handler = pending.continuationHandler {
+            guard let data = handler(challenge) else {
+                await cancelContinuation(tag: tag, pending: pending)
+                return
+            }
+            pendingCommands[tag] = pending
+            do {
+                try await channel?.writeAndFlush(data)
+            } catch {
+                pending.timeoutTask.cancel()
+                pendingCommands[tag] = nil
+                pending.continuation.resume(throwing: error)
+            }
+            return
+        }
+
+        await cancelContinuation(tag: tag, pending: pending)
+    }
+
+    private func cancelContinuation(tag: String, pending: PendingCommand) async {
+        pendingContinuationTag = nil
+        pending.timeoutTask.cancel()
+        pendingCommands[tag] = nil
+
+        let cancelData = Data("*\r\n".utf8)
+        _ = try? await channel?.writeAndFlush(cancelData)
+        pending.continuation.resume(throwing: IMAPError.invalidState("Missing continuation handler"))
+    }
+    
+    func handleTimeout(for tag: String) async {
+        if let pending = pendingCommands[tag] {
+            pendingCommands[tag] = nil
+            if pendingContinuationTag == tag {
+                pendingContinuationTag = nil
+            }
+            pending.continuation.resume(throwing: IMAPError.timeout)
+        }
+    }
+
+    func updateCapabilitiesIfPresent(_ status: IMAPResponse.ResponseStatus) {
+        let code: IMAPResponse.ResponseCode?
+        switch status {
+        case .ok(let statusCode, _),
+             .no(let statusCode, _),
+             .bad(let statusCode, _),
+             .preauth(let statusCode, _),
+             .bye(let statusCode, _):
+            code = statusCode
+        }
+        
+        if case .capability(let caps) = code {
+            serverCapabilities = Set(caps)
+        }
     }
 }
 

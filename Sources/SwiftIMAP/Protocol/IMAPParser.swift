@@ -3,6 +3,7 @@ import Foundation
 public final class IMAPParser {
     private var buffer: Data
     private var pendingLiteral: PendingLiteral?
+    private var literalQueue: [Data] = []
     
     private struct PendingLiteral {
         let size: Int
@@ -41,7 +42,7 @@ public final class IMAPParser {
                     if let nextLiteral = IMAPLiteralParser.findLiteral(in: continuation) {
                         // The continuation contains another literal
                         // We need to continue collecting literals
-                        let partialWithFirstLiteral = literal.partialLine + "~LITERAL~" + String(continuation[..<nextLiteral.range.upperBound])
+                        let partialWithFirstLiteral = literal.partialLine + "~LITERAL~" + String(continuation[..<nextLiteral.range.lowerBound])
                         
                         // Save the current literal data
                         var collectedSoFar = literal.collectedLiterals
@@ -105,11 +106,11 @@ public final class IMAPParser {
         while let line = extractLine() {
             if let literalInfo = IMAPLiteralParser.findLiteral(in: line) {
                 // Start collecting a literal
-                // The line includes everything up to and including {size}
+                // The line includes everything up to the literal marker
                 pendingLiteral = PendingLiteral(
                     size: literalInfo.size,
                     collectedData: Data(),
-                    partialLine: String(line[..<literalInfo.range.upperBound]),
+                    partialLine: String(line[..<literalInfo.range.lowerBound]),
                     collectedLiterals: []
                 )
                 // Recursively continue parsing to handle the literal
@@ -147,11 +148,14 @@ public final class IMAPParser {
         guard !trimmed.isEmpty else { return nil }
         
         if trimmed.hasPrefix("* ") {
-            return try parseUntaggedResponseWithLiteral(String(trimmed.dropFirst(2)), literalData: literalData)
-        } else if trimmed.hasPrefix("+ ") {
-            return .continuation(String(trimmed.dropFirst(2)))
-        } else {
-            return try parseTaggedResponse(trimmed)
+            let remainder = String(trimmed.dropFirst(2))
+            if isFetchResponse(remainder) {
+                return try parseUntaggedResponseWithLiteral(remainder, literalData: literalData)
+            }
+        }
+        
+        return try withLiteralQueue([literalData]) {
+            return try parseLine(line)
         }
     }
     
@@ -161,12 +165,33 @@ public final class IMAPParser {
         guard !trimmed.isEmpty else { return nil }
         
         if trimmed.hasPrefix("* ") {
-            return try parseUntaggedResponseWithMultipleLiterals(String(trimmed.dropFirst(2)), literalDataArray: literalDataArray)
-        } else if trimmed.hasPrefix("+ ") {
-            return .continuation(String(trimmed.dropFirst(2)))
-        } else {
-            return try parseTaggedResponse(trimmed)
+            let remainder = String(trimmed.dropFirst(2))
+            if isFetchResponse(remainder) {
+                return try parseUntaggedResponseWithMultipleLiterals(remainder, literalDataArray: literalDataArray)
+            }
         }
+        
+        return try withLiteralQueue(literalDataArray) {
+            return try parseLine(line)
+        }
+    }
+
+    private func withLiteralQueue(
+        _ dataArray: [Data],
+        parse: () throws -> IMAPResponse?
+    ) rethrows -> IMAPResponse? {
+        let previousQueue = literalQueue
+        literalQueue = dataArray
+        defer { literalQueue = previousQueue }
+        return try parse()
+    }
+
+    private func isFetchResponse(_ untaggedLine: String) -> Bool {
+        let parts = untaggedLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 2, UInt32(parts[0]) != nil else {
+            return false
+        }
+        return parts[1].uppercased() == "FETCH"
     }
     
     private func parseUntaggedResponseWithLiteral(_ line: String, literalData: Data) throws -> IMAPResponse {
@@ -328,6 +353,8 @@ public final class IMAPParser {
         
         if trimmed.hasPrefix("* ") {
             return try parseUntaggedResponse(String(trimmed.dropFirst(2)))
+        } else if trimmed == "+" {
+            return .continuation("")
         } else if trimmed.hasPrefix("+ ") {
             return .continuation(String(trimmed.dropFirst(2)))
         } else {
@@ -356,9 +383,9 @@ public final class IMAPParser {
         case "BAD":
             status = .bad(code, text)
         case "PREAUTH":
-            status = .preauth(text)
+            status = .preauth(code, text)
         case "BYE":
-            status = .bye(text)
+            status = .bye(code, text)
         default:
             throw IMAPError.parsingError("Unknown response status: \(statusStr)")
         }
@@ -419,9 +446,9 @@ public final class IMAPParser {
             case "BAD":
                 status = .bad(code, text)
             case "PREAUTH":
-                status = .preauth(text)
+                status = .preauth(code, text)
             case "BYE":
-                status = .bye(text)
+                status = .bye(code, text)
             default:
                 fatalError("Unreachable")
             }
@@ -652,27 +679,32 @@ public final class IMAPParser {
             }
 
             let subtype = try parseNString(scanner)
-            
-            // Skip optional multipart parameters, disposition, language for now
-            while scanner.scanString(")") == nil && !scanner.isAtEnd {
-                 _ = scanner.scanUpToCharacters(from: CharacterSet(charactersIn: ")"))
+
+            let parameters = try parseOptionalParameterList(scanner)
+            let disposition = try parseOptionalDisposition(scanner)
+            let language = try parseOptionalLanguage(scanner)
+            let location = try parseOptionalLocation(scanner)
+            let extensions = try parseBodyExtensions(scanner)
+
+            guard scanner.scanString(")") != nil else {
+                throw IMAPError.parsingError("Expected closing parenthesis for multipart body structure")
             }
             
             // For multipart, we need to create a BodyStructureData with parts
             return IMAPResponse.BodyStructureData(
                 type: "multipart",
                 subtype: subtype,
-                parameters: nil,
+                parameters: parameters,
                 id: nil,
                 description: nil,
                 encoding: "7bit",
                 size: 0,
                 lines: nil,
                 md5: nil,
-                disposition: nil,
-                language: nil,
-                location: nil,
-                extensions: nil,
+                disposition: disposition,
+                language: language,
+                location: location,
+                extensions: extensions,
                 parts: parts
             )
 
@@ -696,23 +728,49 @@ public final class IMAPParser {
             throw IMAPError.parsingError("Invalid size in body part")
         }
 
-        // Skip remaining fields for now - we'll just parse the basic structure
-        var lines: UInt = 0
+        var lines: UInt32? = nil
+        var md5: String? = nil
+        var disposition: IMAPResponse.DispositionData? = nil
+        var language: [String]? = nil
+        var location: String? = nil
+        var extensions: [String]? = nil
+
         if type.lowercased() == "text" {
             _ = scanner.scanCharacters(from: .whitespaces)
-            lines = scanner.scanUInt() ?? 0
-        }
-        
-        // Skip any extension data until the closing parenthesis of the part
-        while !scanner.isAtEnd {
-            _ = scanner.currentIndex
-            if scanner.scanString(")") != nil {
-                scanner.currentIndex = scanner.string.index(before: scanner.currentIndex) // put it back
-                break
+            if let lineCount = scanner.scanUInt() {
+                lines = UInt32(lineCount)
             }
-            _ = scanner.scanCharacter()
+        } else if type.lowercased() == "message" && subtype.lowercased() == "rfc822" {
+            _ = scanner.scanCharacters(from: .whitespaces)
+            _ = try parseEnvelopeData(scanner)
+            _ = scanner.scanCharacters(from: .whitespaces)
+            _ = try parseBodyStructure(scanner)
+            _ = scanner.scanCharacters(from: .whitespaces)
+            if let lineCount = scanner.scanUInt() {
+                lines = UInt32(lineCount)
+            }
         }
-        
+
+        if !peekIsClosingParen(scanner) {
+            md5 = try parseNilOrQuotedString(scanner)
+        }
+
+        if !peekIsClosingParen(scanner) {
+            disposition = try parseDisposition(scanner)
+        }
+
+        if !peekIsClosingParen(scanner) {
+            language = try parseLanguage(scanner)
+        }
+
+        if !peekIsClosingParen(scanner) {
+            location = try parseNilOrQuotedString(scanner)
+        }
+
+        if !peekIsClosingParen(scanner) {
+            extensions = try parseBodyExtensions(scanner)
+        }
+
         guard scanner.scanString(")") != nil else {
             throw IMAPError.parsingError("Expected closing parenthesis for single part body structure")
         }
@@ -725,14 +783,175 @@ public final class IMAPParser {
             description: description,
             encoding: encoding,
             size: UInt32(size),
-            lines: lines > 0 ? UInt32(lines) : nil,
-            md5: nil,
-            disposition: nil,
-            language: nil,
-            location: nil,
-            extensions: nil,
+            lines: lines,
+            md5: md5,
+            disposition: disposition,
+            language: language,
+            location: location,
+            extensions: extensions,
             parts: nil
         )
+    }
+
+    private func peekIsClosingParen(_ scanner: Scanner) -> Bool {
+        let currentPos = scanner.currentIndex
+        _ = scanner.scanCharacters(from: .whitespaces)
+        let isClosing = scanner.scanString(")") != nil
+        scanner.currentIndex = currentPos
+        return isClosing
+    }
+
+    private func parseOptionalParameterList(_ scanner: Scanner) throws -> [String: String]? {
+        guard !peekIsClosingParen(scanner) else { return nil }
+        return try parseParameterList(scanner)
+    }
+
+    private func parseOptionalDisposition(_ scanner: Scanner) throws -> IMAPResponse.DispositionData? {
+        guard !peekIsClosingParen(scanner) else { return nil }
+        return try parseDisposition(scanner)
+    }
+
+    private func parseOptionalLanguage(_ scanner: Scanner) throws -> [String]? {
+        guard !peekIsClosingParen(scanner) else { return nil }
+        return try parseLanguage(scanner)
+    }
+
+    private func parseOptionalLocation(_ scanner: Scanner) throws -> String? {
+        guard !peekIsClosingParen(scanner) else { return nil }
+        return try parseNilOrQuotedString(scanner)
+    }
+
+    private func parseDisposition(_ scanner: Scanner) throws -> IMAPResponse.DispositionData? {
+        _ = scanner.scanCharacters(from: .whitespaces)
+
+        let currentPos = scanner.currentIndex
+        if scanner.scanString("NIL") != nil {
+            let nextPos = scanner.currentIndex
+            if nextPos < scanner.string.endIndex {
+                let nextChar = scanner.string[nextPos]
+                if " ()\r\n".contains(nextChar) {
+                    return nil
+                }
+            } else {
+                return nil
+            }
+            scanner.currentIndex = currentPos
+        }
+
+        guard scanner.scanString("(") != nil else {
+            throw IMAPError.parsingError("Expected opening parenthesis for disposition")
+        }
+
+        let type = try parseNString(scanner)
+        let parameters = try parseParameterList(scanner)
+
+        _ = scanner.scanCharacters(from: .whitespaces)
+        guard scanner.scanString(")") != nil else {
+            throw IMAPError.parsingError("Expected closing parenthesis for disposition")
+        }
+
+        return IMAPResponse.DispositionData(type: type, parameters: parameters)
+    }
+
+    private func parseLanguage(_ scanner: Scanner) throws -> [String]? {
+        _ = scanner.scanCharacters(from: .whitespaces)
+
+        let currentPos = scanner.currentIndex
+        if scanner.scanString("NIL") != nil {
+            let nextPos = scanner.currentIndex
+            if nextPos < scanner.string.endIndex {
+                let nextChar = scanner.string[nextPos]
+                if " ()\r\n".contains(nextChar) {
+                    return nil
+                }
+            } else {
+                return nil
+            }
+            scanner.currentIndex = currentPos
+        }
+
+        if scanner.scanString("(") != nil {
+            var languages: [String] = []
+            _ = scanner.scanCharacters(from: .whitespaces)
+
+            while scanner.scanString(")") == nil {
+                guard !scanner.isAtEnd else {
+                    throw IMAPError.parsingError("Unclosed language list")
+                }
+                let language = try parseNString(scanner)
+                languages.append(language)
+                _ = scanner.scanCharacters(from: .whitespaces)
+            }
+            return languages
+        }
+
+        scanner.currentIndex = currentPos
+        return [try parseNString(scanner)]
+    }
+
+    private func parseBodyExtensions(_ scanner: Scanner) throws -> [String]? {
+        var extensions: [String] = []
+
+        while !peekIsClosingParen(scanner) && !scanner.isAtEnd {
+            let extensionValue = try parseBodyExtension(scanner)
+            extensions.append(extensionValue)
+            _ = scanner.scanCharacters(from: .whitespaces)
+        }
+
+        return extensions.isEmpty ? nil : extensions
+    }
+
+    private func parseBodyExtension(_ scanner: Scanner) throws -> String {
+        _ = scanner.scanCharacters(from: .whitespaces)
+
+        if let literal = try parseLiteralPlaceholder(scanner) {
+            return literal
+        }
+
+        let currentPos = scanner.currentIndex
+        if scanner.scanString("NIL") != nil {
+            let nextPos = scanner.currentIndex
+            if nextPos < scanner.string.endIndex {
+                let nextChar = scanner.string[nextPos]
+                if " ()\r\n".contains(nextChar) {
+                    return "NIL"
+                }
+            } else {
+                return "NIL"
+            }
+            scanner.currentIndex = currentPos
+        }
+
+        if scanner.scanString("(") != nil {
+            var items: [String] = []
+            _ = scanner.scanCharacters(from: .whitespaces)
+
+            while scanner.scanString(")") == nil {
+                guard !scanner.isAtEnd else {
+                    throw IMAPError.parsingError("Unclosed body extension list")
+                }
+                let item = try parseBodyExtension(scanner)
+                items.append(item)
+                _ = scanner.scanCharacters(from: .whitespaces)
+            }
+
+            return "(" + items.joined(separator: " ") + ")"
+        }
+
+        if let number = scanner.scanUInt() {
+            return String(number)
+        }
+
+        if scanner.scanString("\"") != nil {
+            scanner.currentIndex = scanner.string.index(before: scanner.currentIndex)
+            return try parseQuotedString(scanner)
+        }
+
+        if let atom = scanner.scanUpToCharacters(from: CharacterSet(charactersIn: " ()\"\r\n")) {
+            return atom
+        }
+
+        throw IMAPError.parsingError("Expected body extension")
     }
     
     private func parseBodyAttribute(name: String, scanner: Scanner) throws -> IMAPResponse.FetchAttribute? {
@@ -868,26 +1087,54 @@ public final class IMAPParser {
         
         var result = ""
         
-        while true {
-            if let text = scanner.scanUpToString("\"") {
-                result.append(text)
-            }
-            
-            guard scanner.scanString("\"") != nil else {
-                throw IMAPError.parsingError("Unclosed quoted string")
+        while !scanner.isAtEnd {
+            if scanner.scanString("\\") != nil {
+                guard let escaped = scanner.scanCharacter() else {
+                    throw IMAPError.parsingError("Invalid escape sequence")
+                }
+                result.append(escaped)
+                continue
             }
             
             if scanner.scanString("\"") != nil {
-                result.append("\"")
-            } else {
-                break
+                return result
+            }
+            
+            if let text = scanner.scanUpToCharacters(from: CharacterSet(charactersIn: "\\\"")) {
+                result.append(text)
+            } else if let char = scanner.scanCharacter() {
+                result.append(char)
             }
         }
         
-        return result
+        throw IMAPError.parsingError("Unclosed quoted string")
+    }
+
+    private func parseLiteralPlaceholder(_ scanner: Scanner) throws -> String? {
+        let currentPos = scanner.currentIndex
+        if scanner.scanString("~LITERAL~") != nil {
+            return try nextLiteralString()
+        }
+        scanner.currentIndex = currentPos
+        return nil
+    }
+
+    private func nextLiteralString() throws -> String {
+        guard !literalQueue.isEmpty else {
+            throw IMAPError.parsingError("Missing literal data for placeholder")
+        }
+        let data = literalQueue.removeFirst()
+        if let decoded = String(data: data, encoding: .utf8) {
+            return decoded
+        }
+        return String(data: data, encoding: .isoLatin1) ?? ""
     }
     
     private func parseAString(_ scanner: Scanner) throws -> String {
+        if let literal = try parseLiteralPlaceholder(scanner) {
+            return literal
+        }
+        
         if scanner.scanString("\"") != nil {
             scanner.currentIndex = scanner.string.index(before: scanner.currentIndex)
             return try parseQuotedString(scanner)
@@ -1017,6 +1264,10 @@ public final class IMAPParser {
     
     private func parseNString(_ scanner: Scanner) throws -> String {
         _ = scanner.scanCharacters(from: .whitespaces)
+
+        if let literal = try parseLiteralPlaceholder(scanner) {
+            return literal
+        }
         
         // Check for empty position (e.g., between two spaces)
         let currentPosition = scanner.currentIndex

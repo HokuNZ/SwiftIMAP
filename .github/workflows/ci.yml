@@ -71,8 +71,40 @@ jobs:
         name: documentation
         path: docs
 
+  greenmail-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        swift: ['5.10']
+    container:
+      image: swift:${{ matrix.swift }}
+    services:
+      greenmail:
+        image: greenmail/standalone:2.0.0
+        env:
+          GREENMAIL_OPTS: >-
+            -Dgreenmail.imap.hostname=0.0.0.0 -Dgreenmail.imap.port=3143
+            -Dgreenmail.imaps.hostname=0.0.0.0 -Dgreenmail.imaps.port=3993
+            -Dgreenmail.smtp.hostname=0.0.0.0 -Dgreenmail.smtp.port=3025
+            -Dgreenmail.users.login=email
+            -Dgreenmail.users=test:test@example.com
+        ports:
+          - 3143:3143
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run GreenMail integration tests
+      env:
+        GREENMAIL_ENABLED: "1"
+        GREENMAIL_REQUIRED: "1"
+        GREENMAIL_HOST: greenmail
+        GREENMAIL_IMAP_PORT: "3143"
+        GREENMAIL_USER: test
+        GREENMAIL_DOMAIN: example.com
+        GREENMAIL_PASSWORD: test
+      run: swift test --filter GreenMailIntegrationTests
+
   release:
-    needs: [test-macos, lint]
+    needs: [test-macos, lint, greenmail-integration]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:

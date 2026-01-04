@@ -48,6 +48,18 @@ final class IMAPEncoderTests: XCTestCase {
         
         XCTAssertEqual(result, "A005 LOGIN \"user@example.com\" \"pass\\\"word\"\r\n")
     }
+
+    func testEncodeLoginCommandWithLiteralAString() throws {
+        let command = IMAPCommand(tag: "A021", command: .login(username: "user\nname", password: "pass"))
+        let encoded = try encoder.encodeCommandSegments(command)
+
+        XCTAssertEqual(String(data: encoded.initialData, encoding: .utf8), "A021 LOGIN {9}\r\n")
+        XCTAssertEqual(encoded.continuationSegments.count, 1)
+        XCTAssertEqual(
+            String(data: encoded.continuationSegments[0], encoding: .utf8),
+            "user\nname \"pass\"\r\n"
+        )
+    }
     
     func testEncodeSelectCommand() throws {
         let command = IMAPCommand(tag: "A006", command: .select(mailbox: "INBOX"))
