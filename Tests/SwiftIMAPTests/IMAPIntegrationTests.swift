@@ -21,8 +21,15 @@ final class IMAPIntegrationTests: XCTestCase {
     }
     
     override func tearDown() async throws {
-        try await mockServer.shutdown()
-        try await eventLoopGroup.shutdownGracefully()
+        if let mockServer {
+            try await mockServer.shutdown()
+            self.mockServer = nil
+        }
+        if let eventLoopGroup {
+            try await eventLoopGroup.shutdownGracefully()
+            self.eventLoopGroup = nil
+        }
+        serverPort = nil
         try await super.tearDown()
     }
     
