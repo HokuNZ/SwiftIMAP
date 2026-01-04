@@ -24,6 +24,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.3.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.3.0"),
         .package(url: "https://github.com/miximka/MimeParser.git", branch: "master")
     ],
     targets: [
