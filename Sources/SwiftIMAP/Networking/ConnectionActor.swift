@@ -331,18 +331,32 @@ actor ConnectionActor {
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 await self.handleTimeout(for: commandTag)
             }
-            
-            pendingCommands[command.tag] = PendingCommand(
+
+            let pending = PendingCommand(
                 command: command,
                 continuation: continuation,
                 continuationSequence: continuationSequence,
                 continuationHandler: continuationHandlerData,
                 timeoutTask: timeoutTask
             )
-            
+            pendingCommands[command.tag] = pending
+
             logger.log(level: .debug, "Sending command \(command.tag): \(command.command)")
-            
-            try await channel.writeAndFlush(encoded.initialData)
+
+            do {
+                try await channel.writeAndFlush(encoded.initialData)
+            } catch {
+                guard pendingCommands[command.tag] != nil else {
+                    return
+                }
+                pending.timeoutTask.cancel()
+                pendingCommands[command.tag] = nil
+                if pendingContinuationTag == command.tag {
+                    pendingContinuationTag = nil
+                }
+                continuation.resume(throwing: error)
+                return
+            }
         } catch {
             continuation.resume(throwing: error)
         }
@@ -516,8 +530,14 @@ private extension ConnectionActor {
             do {
                 try await channel?.writeAndFlush(data)
             } catch {
+                guard pendingCommands[tag] != nil else {
+                    return
+                }
                 pending.timeoutTask.cancel()
                 pendingCommands[tag] = nil
+                if pendingContinuationTag == tag {
+                    pendingContinuationTag = nil
+                }
                 pending.continuation.resume(throwing: error)
             }
 
@@ -536,8 +556,14 @@ private extension ConnectionActor {
             do {
                 try await channel?.writeAndFlush(data)
             } catch {
+                guard pendingCommands[tag] != nil else {
+                    return
+                }
                 pending.timeoutTask.cancel()
                 pendingCommands[tag] = nil
+                if pendingContinuationTag == tag {
+                    pendingContinuationTag = nil
+                }
                 pending.continuation.resume(throwing: error)
             }
             return

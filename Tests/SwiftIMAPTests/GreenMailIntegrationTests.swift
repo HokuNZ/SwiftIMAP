@@ -43,7 +43,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
 
-        let targetMailbox = "SwiftIMAP-Test-\(UUID().uuidString)"
+        let targetMailbox = makeMailboxName(prefix: "Move")
         try await client.createMailbox(targetMailbox)
         defer { Task { try? await client.deleteMailbox(targetMailbox) } }
 
@@ -75,6 +75,92 @@ final class GreenMailIntegrationTests: XCTestCase {
         if let movedUid = moved.first?.uid {
             try await client.deleteMessage(uid: movedUid, in: targetMailbox)
         }
+    }
+
+    func testAppendFetchFlagsAndBody() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Append")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let subject = "GreenMail Append \(UUID().uuidString.prefix(8))"
+        let bodyToken = "AppendBody-\(UUID().uuidString.prefix(8))"
+        let now = Date()
+        let message = makeMessage(subject: subject, body: bodyToken, date: now)
+
+        try await client.appendMessage(message, to: mailbox, flags: [.seen, .flagged], date: now)
+
+        let matches = try await client.searchMessagesBySubject(subject, in: mailbox)
+        XCTAssertEqual(matches.count, 1)
+        guard let summary = matches.first else {
+            XCTFail("Expected message summary from subject search")
+            return
+        }
+
+        XCTAssertEqual(summary.envelope?.subject, subject)
+        XCTAssertTrue(summary.flags.contains(.seen))
+        XCTAssertTrue(summary.flags.contains(.flagged))
+        XCTAssertLessThan(abs(summary.internalDate.timeIntervalSince(now)), 120)
+
+        let bodyData = try await client.fetchMessageBody(uid: summary.uid, in: mailbox)
+        let bodyString = bodyData.flatMap { String(data: $0, encoding: .utf8) }
+        XCTAssertNotNil(bodyString)
+        XCTAssertTrue(bodyString?.contains(bodyToken) ?? false)
+
+        try await client.storeFlags(uid: summary.uid, in: mailbox, flags: [.answered], action: .add, silent: true)
+        let answered = try await client.searchMessages(in: mailbox, criteria: .answered)
+        XCTAssertTrue(answered.contains { $0.uid == summary.uid })
+
+        try await client.markAsUnread(uid: summary.uid, in: mailbox)
+        let unread = try await client.searchUnreadMessages(in: mailbox)
+        XCTAssertTrue(unread.contains { $0.uid == summary.uid })
+
+        try await client.markAsRead(uid: summary.uid, in: mailbox)
+        let unreadAfter = try await client.searchUnreadMessages(in: mailbox)
+        XCTAssertFalse(unreadAfter.contains { $0.uid == summary.uid })
+    }
+
+    func testCopyAndRenameMailbox() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let sourceMailbox = makeMailboxName(prefix: "Source")
+        let destinationMailbox = makeMailboxName(prefix: "Dest")
+        let renamedMailbox = makeMailboxName(prefix: "Renamed")
+
+        try await client.createMailbox(sourceMailbox)
+        try await client.createMailbox(destinationMailbox)
+        defer {
+            Task {
+                try? await client.deleteMailbox(sourceMailbox)
+                try? await client.deleteMailbox(destinationMailbox)
+                try? await client.deleteMailbox(renamedMailbox)
+            }
+        }
+
+        let subject = "GreenMail Copy \(UUID().uuidString.prefix(8))"
+        let bodyToken = "CopyBody-\(UUID().uuidString.prefix(8))"
+        let message = makeMessage(subject: subject, body: bodyToken)
+
+        try await client.appendMessage(message, to: sourceMailbox)
+
+        let matches = try await client.searchMessagesBySubject(subject, in: sourceMailbox)
+        guard let uid = matches.first?.uid else {
+            XCTFail("Expected UID from source mailbox search")
+            return
+        }
+
+        try await client.copyMessage(uid: uid, from: sourceMailbox, to: destinationMailbox)
+
+        let copied = try await client.searchMessagesBySubject(subject, in: destinationMailbox)
+        XCTAssertFalse(copied.isEmpty)
+
+        try await client.renameMailbox(from: destinationMailbox, to: renamedMailbox)
+
+        let renamed = try await client.searchMessagesBySubject(subject, in: renamedMailbox)
+        XCTAssertFalse(renamed.isEmpty)
     }
 }
 
@@ -123,16 +209,25 @@ private extension GreenMailIntegrationTests {
         return client
     }
 
-    func makeMessage(subject: String, body: String) -> Data {
+    func makeMessage(subject: String, body: String, date: Date = Date()) -> Data {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let dateHeader = formatter.string(from: date)
+
         let lines = [
             "From: test@example.com",
             "To: test@example.com",
             "Subject: \(subject)",
-            "Date: Tue, 02 Jan 2024 00:00:00 +0000",
+            "Date: \(dateHeader)",
             "",
             body
         ]
         return Data(lines.joined(separator: "\r\n").utf8)
+    }
+
+    func makeMailboxName(prefix: String) -> String {
+        "SwiftIMAP-\(prefix)-\(UUID().uuidString)"
     }
 
     private static func loadConfig() -> Config? {
