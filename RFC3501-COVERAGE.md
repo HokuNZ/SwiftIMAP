@@ -152,7 +152,7 @@ Reference:
   - Implementation: `Sources/SwiftIMAP/Protocol/IMAPEncoder+Search.swift`
 
 ## 8. Sequence Sets (RFC 2.3.1.2)
-- [ ] (partial) `*` (last message) is not representable in `SequenceSet` (current API requires `UInt32`).
+- [x] `*` (last message) is supported via `.last` and `*:n` via `.rangeFromLast(to:)`.
 
 ## 9. Testing Coverage
 - [x] Encoder unit tests (`Tests/SwiftIMAPTests/IMAPEncoderTests.swift`).
@@ -169,7 +169,6 @@ Reference:
 ---
 
 Planned next passes (suggested order):
-1) SequenceSet support for `*` and mixed `1:*` ranges.
-2) FETCH RFC822.* and BODY[HEADER]/BODY[TEXT]/HEADER.FIELDS parsing into typed attributes.
-3) Parenthesized list parsing for quoted strings and nested lists.
-4) Envelope group address preservation in high-level mapping.
+1) FETCH RFC822.* and BODY[HEADER]/BODY[TEXT]/HEADER.FIELDS parsing into typed attributes.
+2) Parenthesized list parsing for quoted strings and nested lists.
+3) Envelope group address preservation in high-level mapping.

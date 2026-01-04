@@ -152,6 +152,28 @@ final class IMAPEncoderTests: XCTestCase {
         
         XCTAssertEqual(result, "A015 FETCH 10:* FULL\r\n")
     }
+
+    func testEncodeFetchCommandWithLastSequence() throws {
+        let command = IMAPCommand(tag: "A015B", command: .fetch(
+            sequence: .last,
+            items: [.uid]
+        ))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+
+        XCTAssertEqual(result, "A015B FETCH * UID\r\n")
+    }
+
+    func testEncodeFetchCommandWithFromLastRange() throws {
+        let command = IMAPCommand(tag: "A015C", command: .fetch(
+            sequence: .rangeFromLast(to: 5),
+            items: [.flags]
+        ))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+
+        XCTAssertEqual(result, "A015C FETCH *:5 FLAGS\r\n")
+    }
     
     func testEncodeStoreCommand() throws {
         let command = IMAPCommand(tag: "A016", command: .store(

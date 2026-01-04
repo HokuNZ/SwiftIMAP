@@ -122,6 +122,12 @@ final class ModelTests: XCTestCase {
         
         let openRange = IMAPCommand.SequenceSet.range(from: 100, to: nil)
         XCTAssertEqual(openRange.stringValue, "100:*")
+
+        let last = IMAPCommand.SequenceSet.last
+        XCTAssertEqual(last.stringValue, "*")
+
+        let lastRange = IMAPCommand.SequenceSet.rangeFromLast(to: 7)
+        XCTAssertEqual(lastRange.stringValue, "*:7")
         
         let list = IMAPCommand.SequenceSet.list([
             .single(1),

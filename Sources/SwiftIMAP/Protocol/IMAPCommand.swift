@@ -137,19 +137,25 @@ public struct IMAPCommand: Sendable {
     
     public enum SequenceSet: Sendable {
         case single(UInt32)
+        case last
         case range(from: UInt32, to: UInt32?)
+        case rangeFromLast(to: UInt32)
         case list([SequenceSet])
         
         public var stringValue: String {
             switch self {
             case .single(let num):
                 return "\(num)"
+            case .last:
+                return "*"
             case .range(let from, let to):
                 if let to = to {
                     return "\(from):\(to)"
                 } else {
                     return "\(from):*"
                 }
+            case .rangeFromLast(let to):
+                return "*:\(to)"
             case .list(let items):
                 return items.map { $0.stringValue }.joined(separator: ",")
             }
