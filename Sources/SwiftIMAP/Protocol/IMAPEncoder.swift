@@ -32,106 +32,46 @@ public final class IMAPEncoder {
         }
 
         var parts: [CommandPart] = [.text(command.tag)]
+        appendCommandParts(&parts, command: command.command)
+        return parts
+    }
 
-        switch command.command {
-        case .capability:
-            parts.append(.text("CAPABILITY"))
-
-        case .noop:
-            parts.append(.text("NOOP"))
-
-        case .logout:
-            parts.append(.text("LOGOUT"))
-
-        case .starttls:
-            parts.append(.text("STARTTLS"))
+    private func appendCommandParts(_ parts: inout [CommandPart], command: IMAPCommand.Command) {
+        switch command {
+        case .capability, .noop, .logout, .starttls, .check, .close, .expunge, .idle:
+            parts.append(.text(simpleCommandName(for: command)))
 
         case .authenticate(let mechanism, let initialResponse):
-            parts.append(.text("AUTHENTICATE"))
-            parts.append(.text(mechanism))
-            if let response = initialResponse {
-                parts.append(.text(response))
-            }
+            appendAuthenticateParts(&parts, mechanism: mechanism, initialResponse: initialResponse)
 
         case .login(let username, let password):
-            parts.append(.text("LOGIN"))
-            parts.append(encodeAStringPart(username, forceQuote: true))
-            parts.append(encodeAStringPart(password, forceQuote: true))
+            appendLoginParts(&parts, username: username, password: password)
 
-        case .select(let mailbox):
-            parts.append(.text("SELECT"))
-            parts.append(.text(encodeMailboxName(mailbox)))
-
-        case .examine(let mailbox):
-            parts.append(.text("EXAMINE"))
-            parts.append(.text(encodeMailboxName(mailbox)))
-
-        case .create(let mailbox):
-            parts.append(.text("CREATE"))
-            parts.append(.text(encodeMailboxName(mailbox)))
-
-        case .delete(let mailbox):
-            parts.append(.text("DELETE"))
-            parts.append(.text(encodeMailboxName(mailbox)))
+        case .select(let mailbox),
+             .examine(let mailbox),
+             .create(let mailbox),
+             .delete(let mailbox),
+             .subscribe(let mailbox),
+             .unsubscribe(let mailbox):
+            appendMailboxParts(&parts, command: command, mailbox: mailbox)
 
         case .rename(let from, let to):
-            parts.append(.text("RENAME"))
-            parts.append(.text(encodeMailboxName(from)))
-            parts.append(.text(encodeMailboxName(to)))
-
-        case .subscribe(let mailbox):
-            parts.append(.text("SUBSCRIBE"))
-            parts.append(.text(encodeMailboxName(mailbox)))
-
-        case .unsubscribe(let mailbox):
-            parts.append(.text("UNSUBSCRIBE"))
-            parts.append(.text(encodeMailboxName(mailbox)))
+            appendRenameParts(&parts, from: from, to: to)
 
         case .list(let reference, let pattern):
-            parts.append(.text("LIST"))
-            parts.append(encodeAStringPart(reference, forceQuote: true))
-            parts.append(encodeListPatternPart(pattern))
+            appendListParts(&parts, reference: reference, pattern: pattern)
 
         case .lsub(let reference, let pattern):
-            parts.append(.text("LSUB"))
-            parts.append(encodeAStringPart(reference, forceQuote: false))
-            parts.append(encodeListPatternPart(pattern))
+            appendLsubParts(&parts, reference: reference, pattern: pattern)
 
         case .status(let mailbox, let items):
-            parts.append(.text("STATUS"))
-            parts.append(.text(encodeMailboxName(mailbox)))
-            parts.append(.text("(" + items.map { $0.rawValue }.joined(separator: " ") + ")"))
+            appendStatusParts(&parts, mailbox: mailbox, items: items)
 
         case .append(let mailbox, let flags, let date, let data):
-            parts.append(.text("APPEND"))
-            parts.append(.text(encodeMailboxName(mailbox)))
-
-            if let flags = flags, !flags.isEmpty {
-                parts.append(.text("(" + flags.joined(separator: " ") + ")"))
-            }
-
-            if let date = date {
-                parts.append(.text(quote(formatInternalDate(date))))
-            }
-
-            parts.append(.literal(data))
-
-        case .check:
-            parts.append(.text("CHECK"))
-
-        case .close:
-            parts.append(.text("CLOSE"))
-
-        case .expunge:
-            parts.append(.text("EXPUNGE"))
+            appendAppendParts(&parts, mailbox: mailbox, flags: flags, date: date, data: data)
 
         case .search(let charset, let criteria):
-            parts.append(.text("SEARCH"))
-            if let charset = charset {
-                parts.append(.text("CHARSET"))
-                parts.append(.text(charset))
-            }
-            parts.append(.text(encodeSearchCriteria(criteria)))
+            appendSearchParts(&parts, charset: charset, criteria: criteria)
 
         case .fetch(let sequence, let items):
             parts.append(.text("FETCH"))
@@ -143,28 +83,146 @@ public final class IMAPEncoder {
             parts.append(.text(sequence.stringValue))
             parts.append(.text(encodeStoreFlags(flags, silent: silent)))
 
-        case .copy(let sequence, let mailbox):
-            parts.append(.text("COPY"))
-            parts.append(.text(sequence.stringValue))
-            parts.append(.text(encodeMailboxName(mailbox)))
-
-        case .move(let sequence, let mailbox):
-            parts.append(.text("MOVE"))
-            parts.append(.text(sequence.stringValue))
-            parts.append(.text(encodeMailboxName(mailbox)))
+        case .copy(let sequence, let mailbox),
+             .move(let sequence, let mailbox):
+            appendCopyMoveParts(&parts, command: command, sequence: sequence, mailbox: mailbox)
 
         case .uid(let uidCommand):
             parts.append(.text("UID"))
             parts.append(contentsOf: encodeUIDCommandParts(uidCommand))
 
-        case .idle:
-            parts.append(.text("IDLE"))
-
         case .done:
             break
         }
+    }
 
-        return parts
+    private func simpleCommandName(for command: IMAPCommand.Command) -> String {
+        switch command {
+        case .capability: return "CAPABILITY"
+        case .noop: return "NOOP"
+        case .logout: return "LOGOUT"
+        case .starttls: return "STARTTLS"
+        case .check: return "CHECK"
+        case .close: return "CLOSE"
+        case .expunge: return "EXPUNGE"
+        case .idle: return "IDLE"
+        case .authenticate, .login, .select, .examine, .create, .delete,
+             .rename, .subscribe, .unsubscribe, .list, .lsub, .status,
+             .append, .search, .fetch, .store, .copy, .move, .uid, .done:
+            return ""
+        }
+    }
+
+    private func appendAuthenticateParts(
+        _ parts: inout [CommandPart],
+        mechanism: String,
+        initialResponse: String?
+    ) {
+        parts.append(.text("AUTHENTICATE"))
+        parts.append(.text(mechanism))
+        if let response = initialResponse {
+            parts.append(.text(response))
+        }
+    }
+
+    private func appendLoginParts(_ parts: inout [CommandPart], username: String, password: String) {
+        parts.append(.text("LOGIN"))
+        parts.append(encodeAStringPart(username, forceQuote: true))
+        parts.append(encodeAStringPart(password, forceQuote: true))
+    }
+
+    private func appendMailboxParts(
+        _ parts: inout [CommandPart],
+        command: IMAPCommand.Command,
+        mailbox: String
+    ) {
+        let name: String
+        switch command {
+        case .select: name = "SELECT"
+        case .examine: name = "EXAMINE"
+        case .create: name = "CREATE"
+        case .delete: name = "DELETE"
+        case .subscribe: name = "SUBSCRIBE"
+        case .unsubscribe: name = "UNSUBSCRIBE"
+        default: return
+        }
+        parts.append(.text(name))
+        parts.append(.text(encodeMailboxName(mailbox)))
+    }
+
+    private func appendRenameParts(_ parts: inout [CommandPart], from: String, to: String) {
+        parts.append(.text("RENAME"))
+        parts.append(.text(encodeMailboxName(from)))
+        parts.append(.text(encodeMailboxName(to)))
+    }
+
+    private func appendListParts(_ parts: inout [CommandPart], reference: String, pattern: String) {
+        parts.append(.text("LIST"))
+        parts.append(encodeAStringPart(reference, forceQuote: true))
+        parts.append(encodeListPatternPart(pattern))
+    }
+
+    private func appendLsubParts(_ parts: inout [CommandPart], reference: String, pattern: String) {
+        parts.append(.text("LSUB"))
+        parts.append(encodeAStringPart(reference, forceQuote: false))
+        parts.append(encodeListPatternPart(pattern))
+    }
+
+    private func appendStatusParts(_ parts: inout [CommandPart], mailbox: String, items: [IMAPCommand.StatusItem]) {
+        parts.append(.text("STATUS"))
+        parts.append(.text(encodeMailboxName(mailbox)))
+        parts.append(.text("(" + items.map { $0.rawValue }.joined(separator: " ") + ")"))
+    }
+
+    private func appendAppendParts(
+        _ parts: inout [CommandPart],
+        mailbox: String,
+        flags: [String]?,
+        date: Date?,
+        data: Data
+    ) {
+        parts.append(.text("APPEND"))
+        parts.append(.text(encodeMailboxName(mailbox)))
+
+        if let flags = flags, !flags.isEmpty {
+            parts.append(.text("(" + flags.joined(separator: " ") + ")"))
+        }
+
+        if let date = date {
+            parts.append(.text(quote(formatInternalDate(date))))
+        }
+
+        parts.append(.literal(data))
+    }
+
+    private func appendSearchParts(
+        _ parts: inout [CommandPart],
+        charset: String?,
+        criteria: IMAPCommand.SearchCriteria
+    ) {
+        parts.append(.text("SEARCH"))
+        if let charset = charset {
+            parts.append(.text("CHARSET"))
+            parts.append(.text(charset))
+        }
+        parts.append(.text(encodeSearchCriteria(criteria)))
+    }
+
+    private func appendCopyMoveParts(
+        _ parts: inout [CommandPart],
+        command: IMAPCommand.Command,
+        sequence: IMAPCommand.SequenceSet,
+        mailbox: String
+    ) {
+        let name: String
+        switch command {
+        case .copy: name = "COPY"
+        case .move: name = "MOVE"
+        default: return
+        }
+        parts.append(.text(name))
+        parts.append(.text(sequence.stringValue))
+        parts.append(.text(encodeMailboxName(mailbox)))
     }
 
     private func encodeParts(_ parts: [CommandPart]) -> IMAPEncodedCommand {
@@ -230,7 +288,7 @@ public final class IMAPEncoder {
         return .text(encodeListPattern(pattern))
     }
 
-    private func quote(_ string: String, force: Bool = false) -> String {
+    func quote(_ string: String, force: Bool = false) -> String {
         if force || needsQuoting(string) {
             let escaped = string.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
@@ -328,92 +386,6 @@ public final class IMAPEncoder {
         case .bodyText(let peek):
             return peek ? "BODY.PEEK[TEXT]" : "BODY[TEXT]"
         }
-    }
-    
-    private func encodeSearchCriteria(_ criteria: IMAPCommand.SearchCriteria) -> String {
-        switch criteria {
-        case .all:
-            return "ALL"
-        case .answered:
-            return "ANSWERED"
-        case .deleted:
-            return "DELETED"
-        case .draft:
-            return "DRAFT"
-        case .flagged:
-            return "FLAGGED"
-        case .new:
-            return "NEW"
-        case .old:
-            return "OLD"
-        case .recent:
-            return "RECENT"
-        case .seen:
-            return "SEEN"
-        case .unanswered:
-            return "UNANSWERED"
-        case .undeleted:
-            return "UNDELETED"
-        case .undraft:
-            return "UNDRAFT"
-        case .unflagged:
-            return "UNFLAGGED"
-        case .unseen:
-            return "UNSEEN"
-        case .keyword(let keyword):
-            return "KEYWORD \(keyword)"
-        case .unkeyword(let keyword):
-            return "UNKEYWORD \(keyword)"
-        case .before(let date):
-            return "BEFORE \(formatSearchDate(date))"
-        case .on(let date):
-            return "ON \(formatSearchDate(date))"
-        case .since(let date):
-            return "SINCE \(formatSearchDate(date))"
-        case .sentBefore(let date):
-            return "SENTBEFORE \(formatSearchDate(date))"
-        case .sentOn(let date):
-            return "SENTON \(formatSearchDate(date))"
-        case .sentSince(let date):
-            return "SENTSINCE \(formatSearchDate(date))"
-        case .from(let address):
-            return "FROM \(quote(address))"
-        case .to(let address):
-            return "TO \(quote(address))"
-        case .cc(let address):
-            return "CC \(quote(address))"
-        case .bcc(let address):
-            return "BCC \(quote(address))"
-        case .subject(let text):
-            return "SUBJECT \(quote(text, force: true))"
-        case .body(let text):
-            return "BODY \(quote(text, force: true))"
-        case .text(let text):
-            return "TEXT \(quote(text, force: true))"
-        case .header(let field, let value):
-            return "HEADER \(quote(field)) \(quote(value))"
-        case .larger(let size):
-            return "LARGER \(size)"
-        case .smaller(let size):
-            return "SMALLER \(size)"
-        case .uid(let sequence):
-            return "UID \(sequence.stringValue)"
-        case .not(let criteria):
-            return "NOT \(encodeSearchCriteria(criteria))"
-        case .or(let criteria1, let criteria2):
-            return "OR \(encodeSearchCriteria(criteria1)) \(encodeSearchCriteria(criteria2))"
-        case .and(let criteriaList):
-            return criteriaList.map { encodeSearchCriteria($0) }.joined(separator: " ")
-        case .sequence(let set):
-            return set.stringValue
-        }
-    }
-    
-    private func formatSearchDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "dd-MMM-yyyy"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return quote(formatter.string(from: date))
     }
     
     private func encodeStoreFlags(_ flags: IMAPCommand.StoreFlags, silent: Bool) -> String {

@@ -20,8 +20,8 @@ final class IMAPLiteralParsingSimpleTest: XCTestCase {
         let responses = try parser.parseResponses()
         
         print("\nParsed \(responses.count) responses:")
-        for (i, resp) in responses.enumerated() {
-            print("  [\(i)]: \(resp)")
+        for (index, response) in responses.enumerated() {
+            print("  [\(index)]: \(response)")
         }
         
         XCTAssertEqual(responses.count, 2)

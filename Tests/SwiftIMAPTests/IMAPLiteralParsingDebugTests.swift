@@ -20,8 +20,8 @@ final class IMAPLiteralParsingDebugTests: XCTestCase {
         print("2. First parse...")
         var responses = try parser.parseResponses()
         print("   Got \(responses.count) responses")
-        for (i, resp) in responses.enumerated() {
-            print("   Response \(i): \(resp)")
+        for (index, response) in responses.enumerated() {
+            print("   Response \(index): \(response)")
         }
         
         // Add the literal data
@@ -32,8 +32,8 @@ final class IMAPLiteralParsingDebugTests: XCTestCase {
         print("4. Second parse...")
         responses = try parser.parseResponses()
         print("   Got \(responses.count) responses")
-        for (i, resp) in responses.enumerated() {
-            print("   Response \(i): \(resp)")
+        for (index, response) in responses.enumerated() {
+            print("   Response \(index): \(response)")
         }
         
         // Add the response trailer
@@ -44,8 +44,8 @@ final class IMAPLiteralParsingDebugTests: XCTestCase {
         print("6. Final parse...")
         responses = try parser.parseResponses()
         print("   Got \(responses.count) responses")
-        for (i, resp) in responses.enumerated() {
-            print("   Response \(i): \(resp)")
+        for (index, response) in responses.enumerated() {
+            print("   Response \(index): \(response)")
         }
         
         print("\n=== DEBUG: Test complete ===")
