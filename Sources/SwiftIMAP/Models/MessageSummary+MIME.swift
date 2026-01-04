@@ -26,44 +26,72 @@ public struct ParsedMimeMessage {
     public let parts: [MimePart]
     public let boundary: String?
     public let isMultipart: Bool
-    
+
+    private struct HeaderInfo {
+        let headers: [String: String]
+        let contentType: String?
+        let charset: String?
+        let transferEncoding: String?
+        let boundary: String?
+        let isMultipart: Bool
+    }
+
     init(from mime: Mime) {
-        // Extract headers from other fields
+        let headerInfo = ParsedMimeMessage.parseHeaderInfo(from: mime.header)
+        self.headers = headerInfo.headers
+        self.contentType = headerInfo.contentType
+        self.charset = headerInfo.charset
+        self.transferEncoding = headerInfo.transferEncoding
+        self.boundary = headerInfo.boundary
+        self.isMultipart = headerInfo.isMultipart
+        self.parts = ParsedMimeMessage.extractParts(from: mime)
+    }
+
+    private static func parseHeaderInfo(from header: MimeHeader) -> HeaderInfo {
         var headers: [String: String] = [:]
-        for field in mime.header.other {
+        for field in header.other {
             headers[field.name.lowercased()] = field.body
         }
-        self.headers = headers
-        
-        // Extract content type info
-        if let contentType = mime.header.contentType {
-            self.contentType = contentType.raw
-            self.charset = contentType.charset
-            self.boundary = contentType.parameters["boundary"]
-            self.isMultipart = contentType.raw.lowercased().hasPrefix("multipart/")
+
+        let contentType: String?
+        let charset: String?
+        let boundary: String?
+        let isMultipart: Bool
+
+        if let type = header.contentType {
+            contentType = type.raw
+            charset = type.charset
+            boundary = type.parameters["boundary"]
+            isMultipart = type.raw.lowercased().hasPrefix("multipart/")
         } else {
-            self.contentType = nil
-            self.charset = nil
-            self.boundary = nil
-            self.isMultipart = false
+            contentType = nil
+            charset = nil
+            boundary = nil
+            isMultipart = false
         }
-        
-        // Extract transfer encoding
-        if let encoding = mime.header.contentTransferEncoding {
+
+        let transferEncoding: String?
+        if let encoding = header.contentTransferEncoding {
             switch encoding {
-            case .sevenBit: self.transferEncoding = "7bit"
-            case .eightBit: self.transferEncoding = "8bit"
-            case .binary: self.transferEncoding = "binary"
-            case .quotedPrintable: self.transferEncoding = "quoted-printable"
-            case .base64: self.transferEncoding = "base64"
-            case .other(let value): self.transferEncoding = value
+            case .sevenBit: transferEncoding = "7bit"
+            case .eightBit: transferEncoding = "8bit"
+            case .binary: transferEncoding = "binary"
+            case .quotedPrintable: transferEncoding = "quoted-printable"
+            case .base64: transferEncoding = "base64"
+            case .other(let value): transferEncoding = value
             }
         } else {
-            self.transferEncoding = nil
+            transferEncoding = nil
         }
-        
-        // Parse parts recursively
-        self.parts = ParsedMimeMessage.extractParts(from: mime)
+
+        return HeaderInfo(
+            headers: headers,
+            contentType: contentType,
+            charset: charset,
+            transferEncoding: transferEncoding,
+            boundary: boundary,
+            isMultipart: isMultipart
+        )
     }
     
     /// Recursively extract all parts from a MIME message
@@ -72,14 +100,13 @@ public struct ParsedMimeMessage {
         
         switch mime.content {
         case .body(let body):
-            // Single body part
-            let parsed = ParsedMimeMessage(from: mime)
+            let headerInfo = ParsedMimeMessage.parseHeaderInfo(from: mime.header)
             let part = MimePart(
                 body: body,
-                headers: parsed.headers,
-                contentType: parsed.contentType,
-                charset: parsed.charset,
-                transferEncoding: parsed.transferEncoding,
+                headers: headerInfo.headers,
+                contentType: headerInfo.contentType,
+                charset: headerInfo.charset,
+                transferEncoding: headerInfo.transferEncoding,
                 mime: mime
             )
             allParts.append(part)
@@ -173,12 +200,15 @@ public struct MimePart {
     private let mime: Mime?
     
     init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil, mime: Mime? = nil) {
+        let headerDisposition = mime?.header.contentDisposition?.type
+        let headerTransferEncoding = MimePart.transferEncodingString(from: mime?.header.contentTransferEncoding)
+
         self.body = body
         self.headers = headers
         self.contentType = contentType ?? headers["content-type"]
         self.charset = charset
-        self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"]
-        self.contentDisposition = headers["content-disposition"]
+        self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"] ?? headerTransferEncoding
+        self.contentDisposition = headers["content-disposition"] ?? headerDisposition
         self.contentID = headers["content-id"]
         self.mime = mime
     }
@@ -201,6 +231,10 @@ public struct MimePart {
     
     /// Check if this part is an attachment
     public var isAttachment: Bool {
+        if isInline {
+            return false
+        }
+
         // Check Content-Disposition
         if let disposition = contentDisposition?.lowercased() {
             if disposition.contains("attachment") {
@@ -242,6 +276,14 @@ public struct MimePart {
     
     /// Get the filename if this is an attachment
     public var filename: String? {
+        if let filename = mime?.header.contentDisposition?.filename {
+            return filename
+        }
+        
+        if let name = mime?.header.contentType?.name {
+            return name
+        }
+
         // Check Content-Disposition header
         if let disposition = headers["content-disposition"] {
             if let match = disposition.range(of: #"filename="([^"]+)""#, options: .regularExpression) {
@@ -283,6 +325,18 @@ public struct MimePart {
             return .windowsCP1252
         default:
             return .utf8
+        }
+    }
+
+    private static func transferEncodingString(from encoding: ContentTransferEncoding?) -> String? {
+        guard let encoding else { return nil }
+        switch encoding {
+        case .sevenBit: return "7bit"
+        case .eightBit: return "8bit"
+        case .binary: return "binary"
+        case .quotedPrintable: return "quoted-printable"
+        case .base64: return "base64"
+        case .other(let value): return value
         }
     }
 }
