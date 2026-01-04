@@ -64,12 +64,15 @@ jobs:
           --output-path ./docs \
           --transform-for-static-hosting \
           --hosting-base-path SwiftIMAP
+
+    - name: Archive documentation
+      run: tar -czf docs.tar.gz docs
     
     - name: Upload documentation artifacts
       uses: actions/upload-artifact@v4
       with:
         name: documentation
-        path: docs
+        path: docs.tar.gz
 
   greenmail-integration:
     runs-on: ubuntu-latest
