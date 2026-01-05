@@ -68,4 +68,13 @@ final class IMAPParserTests: XCTestCase {
             XCTFail("Expected tagged response")
         }
     }
+
+    func testParseParenthesizedListWithQuotesAndNestedLists() throws {
+        let scanner = Scanner(string: "(\"Foo Bar\" Baz (\"Inner Value\" Qux) NIL)")
+        scanner.charactersToBeSkipped = nil
+
+        let items = try parser.parseParenthesizedList(scanner)
+
+        XCTAssertEqual(items, ["Foo Bar", "Baz", "(\"Inner Value\" Qux)", "NIL"])
+    }
 }

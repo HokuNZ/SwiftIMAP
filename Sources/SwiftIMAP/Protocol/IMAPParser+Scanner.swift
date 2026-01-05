@@ -8,19 +8,38 @@ extension IMAPParser {
 
         var items: [String] = []
 
-        while scanner.scanString(")") == nil {
+        while true {
+            _ = scanner.scanCharacters(from: .whitespaces)
+            if scanner.scanString(")") != nil {
+                return items
+            }
+
             guard !scanner.isAtEnd else {
                 throw IMAPError.parsingError("Unclosed parenthesis")
             }
 
-            if let item = scanner.scanUpToCharacters(from: CharacterSet(charactersIn: " )")) {
-                items.append(item)
+            if scanner.scanString("(") != nil {
+                let nested = try scanParenthesizedSubstring(scanner)
+                items.append(nested)
+                continue
             }
 
-            _ = scanner.scanCharacters(from: .whitespaces)
-        }
+            if scanner.scanString("\"") != nil {
+                scanner.currentIndex = scanner.string.index(before: scanner.currentIndex)
+                let value = try parseQuotedString(scanner)
+                items.append(value)
+                continue
+            }
 
-        return items
+            if let item = scanner.scanUpToCharacters(
+                from: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ")"))
+            ) {
+                items.append(item)
+                continue
+            }
+
+            _ = scanner.scanCharacter()
+        }
     }
 
     func parseQuotedString(_ scanner: Scanner) throws -> String {
@@ -75,6 +94,52 @@ extension IMAPParser {
         } else {
             throw IMAPError.parsingError("Expected atom or quoted string")
         }
+    }
+
+    private func scanParenthesizedSubstring(_ scanner: Scanner) throws -> String {
+        let string = scanner.string
+        let startIndex = string.index(before: scanner.currentIndex)
+        var depth = 1
+        var index = scanner.currentIndex
+
+        while index < string.endIndex {
+            let character = string[index]
+
+            if character == "\"" {
+                index = string.index(after: index)
+                while index < string.endIndex {
+                    let inner = string[index]
+                    if inner == "\\" {
+                        index = string.index(after: index)
+                        if index < string.endIndex {
+                            index = string.index(after: index)
+                        }
+                        continue
+                    }
+                    if inner == "\"" {
+                        index = string.index(after: index)
+                        break
+                    }
+                    index = string.index(after: index)
+                }
+                continue
+            }
+
+            if character == "(" {
+                depth += 1
+            } else if character == ")" {
+                depth -= 1
+                if depth == 0 {
+                    let endIndex = string.index(after: index)
+                    scanner.currentIndex = endIndex
+                    return String(string[startIndex..<endIndex])
+                }
+            }
+
+            index = string.index(after: index)
+        }
+
+        throw IMAPError.parsingError("Unclosed parenthesis")
     }
 }
 

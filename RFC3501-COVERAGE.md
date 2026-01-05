@@ -21,7 +21,7 @@ Reference:
 - [x] Quoted string parsing with escapes (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
 - [x] Literal handling in responses (single/multiple literals) (`Sources/SwiftIMAP/Protocol/IMAPParser.swift`, `Sources/SwiftIMAP/Protocol/IMAPParser+Literal.swift`).
 - [x] Literal handling in commands (ASTRINGs using literals when needed) (`Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`).
-- [ ] (partial) Parenthesized lists with quoted strings or nested lists (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift` currently reads atoms only).
+- [x] Parenthesized lists with quoted strings and nested lists (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
 - [x] NIL handling (`Sources/SwiftIMAP/Protocol/IMAPParser+Envelope.swift`).
 - [ ] (partial) 8-bit/binary strings (currently decoded as UTF-8 or ISO-8859-1 in literal placeholder).
 
@@ -169,6 +169,4 @@ Reference:
 ---
 
 Planned next passes (suggested order):
-1) FETCH RFC822.* and BODY[HEADER]/BODY[TEXT]/HEADER.FIELDS parsing into typed attributes.
-2) Parenthesized list parsing for quoted strings and nested lists.
-3) Envelope group address preservation in high-level mapping.
+1) Envelope group address preservation in high-level mapping.
