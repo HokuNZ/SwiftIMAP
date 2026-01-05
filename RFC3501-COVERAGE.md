@@ -63,10 +63,10 @@ Reference:
 - [x] CLOSE (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] EXPUNGE (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
 - [x] SEARCH (full criteria list encoded) (`Sources/SwiftIMAP/Protocol/IMAPEncoder+Search.swift`).
-- [ ] (partial) FETCH (RFC822.* and header/text variants not mapped) (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
+- [x] FETCH (RFC822.* and header/text variants mapped) (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] STORE (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
 - [x] COPY (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
-- [ ] (partial) UID (SequenceSet does not support "*") (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
+- [x] UID (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 
 ## 5. Server Responses (RFC 7)
 - [x] Status responses OK/NO/BAD/PREAUTH/BYE (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
@@ -103,14 +103,14 @@ Reference:
 - [x] RFC822.SIZE
 - [x] ENVELOPE
 - [x] BODYSTRUCTURE
-- [ ] (partial) BODY[section] / BODY.PEEK[section] (literal parsing works; header/text variants not surfaced)
-- [ ] RFC822
-- [ ] RFC822.HEADER
-- [ ] RFC822.TEXT
-- [ ] BODY[HEADER]
-- [ ] BODY[TEXT]
-- [ ] BODY[HEADER.FIELDS]
-- [ ] BODY[HEADER.FIELDS.NOT]
+- [x] BODY[section] / BODY.PEEK[section]
+- [x] RFC822
+- [x] RFC822.HEADER
+- [x] RFC822.TEXT
+- [x] BODY[HEADER]
+- [x] BODY[TEXT]
+- [x] BODY[HEADER.FIELDS]
+- [x] BODY[HEADER.FIELDS.NOT]
   - Implementation: `Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`, `Sources/SwiftIMAP/Protocol/IMAPResponse.swift`
 
 ## 7. SEARCH Criteria (RFC 6.4.4)

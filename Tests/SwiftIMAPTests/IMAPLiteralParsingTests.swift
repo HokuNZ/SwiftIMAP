@@ -92,20 +92,99 @@ final class IMAPLiteralParsingTests: XCTestCase {
                 XCTFail("Expected UID attribute")
             }
             
-            // Check BODY.PEEK
-            if case .bodyPeek(let section, let origin, let data) = attrs[1] {
-                XCTAssertEqual(section, "HEADER")
-                XCTAssertNil(origin)
-                XCTAssertNotNil(data)
-                XCTAssertEqual(data?.count, 78)
-                
-                let content = String(data: data!, encoding: .utf8)
+            // Check BODY.PEEK[HEADER]
+            if case .header(let data) = attrs[1] {
+                XCTAssertEqual(data.count, 78)
+
+                let content = String(data: data, encoding: .utf8)
                 XCTAssertEqual(content, literalData)
             } else {
-                XCTFail("Expected bodyPeek attribute, got \(attrs[1])")
+                XCTFail("Expected header attribute, got \(attrs[1])")
             }
         } else {
             XCTFail("Expected untagged fetch response")
+        }
+    }
+
+    func testParseFetchWithRFC822HeaderTextAndFull() throws {
+        let parser = IMAPParser()
+
+        let headerLiteral = "Subject: Test\r\n\r\n"
+        let textLiteral = "Hello\r\n"
+        let fullLiteral = "Subject: Test\r\n\r\nHello\r\n"
+        let response = "* 4 FETCH (RFC822.HEADER {\(headerLiteral.utf8.count)}\r\n" +
+            "\(headerLiteral) RFC822.TEXT {\(textLiteral.utf8.count)}\r\n" +
+            "\(textLiteral) RFC822 {\(fullLiteral.utf8.count)}\r\n" +
+            "\(fullLiteral))\r\n" +
+            "A004 OK Fetch completed\r\n"
+
+        parser.append(response.data(using: .utf8)!)
+
+        let responses = try parser.parseResponses()
+        XCTAssertEqual(responses.count, 2)
+
+        guard case .untagged(.fetch(_, let attrs)) = responses[0] else {
+            XCTFail("Expected untagged fetch response")
+            return
+        }
+
+        XCTAssertEqual(attrs.count, 3)
+
+        if case .header(let data) = attrs[0] {
+            XCTAssertEqual(String(data: data, encoding: .utf8), headerLiteral)
+        } else {
+            XCTFail("Expected RFC822.HEADER attribute")
+        }
+
+        if case .text(let data) = attrs[1] {
+            XCTAssertEqual(String(data: data, encoding: .utf8), textLiteral)
+        } else {
+            XCTFail("Expected RFC822.TEXT attribute")
+        }
+
+        if case .body(let section, let origin, let data) = attrs[2] {
+            XCTAssertNil(section)
+            XCTAssertNil(origin)
+            XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), fullLiteral)
+        } else {
+            XCTFail("Expected RFC822 attribute")
+        }
+    }
+
+    func testParseFetchWithHeaderFields() throws {
+        let parser = IMAPParser()
+
+        let fieldsLiteral = "Subject: A\r\nFrom: B\r\n\r\n"
+        let notLiteral = "Date: Tue\r\n\r\n"
+        let response = "* 6 FETCH (BODY[HEADER.FIELDS (Subject From)] {\(fieldsLiteral.utf8.count)}\r\n" +
+            "\(fieldsLiteral) BODY[HEADER.FIELDS.NOT (Date)] {\(notLiteral.utf8.count)}\r\n" +
+            "\(notLiteral))\r\n" +
+            "A006 OK Fetch completed\r\n"
+
+        parser.append(response.data(using: .utf8)!)
+
+        let responses = try parser.parseResponses()
+        XCTAssertEqual(responses.count, 2)
+
+        guard case .untagged(.fetch(_, let attrs)) = responses[0] else {
+            XCTFail("Expected untagged fetch response")
+            return
+        }
+
+        XCTAssertEqual(attrs.count, 2)
+
+        if case .headerFields(let fields, let data) = attrs[0] {
+            XCTAssertEqual(fields, ["Subject", "From"])
+            XCTAssertEqual(String(data: data, encoding: .utf8), fieldsLiteral)
+        } else {
+            XCTFail("Expected headerFields attribute")
+        }
+
+        if case .headerFieldsNot(let fields, let data) = attrs[1] {
+            XCTAssertEqual(fields, ["Date"])
+            XCTAssertEqual(String(data: data, encoding: .utf8), notLiteral)
+        } else {
+            XCTFail("Expected headerFieldsNot attribute")
         }
     }
     

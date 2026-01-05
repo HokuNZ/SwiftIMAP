@@ -56,6 +56,9 @@ public struct IMAPCommand: Sendable {
         case flags
         case internalDate
         case rfc822Size
+        case rfc822
+        case rfc822Header
+        case rfc822Text
         case envelope
         case body
         case bodyStructure

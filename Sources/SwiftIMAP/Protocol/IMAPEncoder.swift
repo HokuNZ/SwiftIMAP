@@ -364,6 +364,12 @@ public final class IMAPEncoder {
             return "INTERNALDATE"
         case .rfc822Size:
             return "RFC822.SIZE"
+        case .rfc822:
+            return "RFC822"
+        case .rfc822Header:
+            return "RFC822.HEADER"
+        case .rfc822Text:
+            return "RFC822.TEXT"
         case .envelope:
             return "ENVELOPE"
         case .body:

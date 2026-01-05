@@ -174,6 +174,17 @@ final class IMAPEncoderTests: XCTestCase {
 
         XCTAssertEqual(result, "A015C FETCH *:5 FLAGS\r\n")
     }
+
+    func testEncodeFetchCommandWithRFC822Items() throws {
+        let command = IMAPCommand(tag: "A015D", command: .fetch(
+            sequence: .single(2),
+            items: [.rfc822, .rfc822Header, .rfc822Text]
+        ))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+
+        XCTAssertEqual(result, "A015D FETCH 2 (RFC822 RFC822.HEADER RFC822.TEXT)\r\n")
+    }
     
     func testEncodeStoreCommand() throws {
         let command = IMAPCommand(tag: "A016", command: .store(

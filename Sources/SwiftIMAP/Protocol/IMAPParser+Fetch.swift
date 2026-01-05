@@ -2,6 +2,14 @@ import Foundation
 
 extension IMAPParser {
     func parseFetchAttributes(_ input: String) throws -> [IMAPResponse.FetchAttribute] {
+        var literalDataQueue: [Data]? = nil
+        return try parseFetchAttributesInternal(input, literalDataQueue: &literalDataQueue)
+    }
+
+    func parseFetchAttributesInternal(
+        _ input: String,
+        literalDataQueue: inout [Data]?
+    ) throws -> [IMAPResponse.FetchAttribute] {
         guard input.hasPrefix("(") && input.hasSuffix(")") else {
             throw IMAPError.parsingError("Fetch attributes must be parenthesized")
         }
@@ -14,7 +22,7 @@ extension IMAPParser {
 
         while !scanner.isAtEnd {
             let startIndex = scanner.currentIndex
-            if let attr = try parseFetchAttribute(scanner) {
+            if let attr = try parseFetchAttribute(scanner, literalDataQueue: &literalDataQueue) {
                 attributes.append(attr)
             } else {
                 // If no attribute was parsed, advance the scanner to prevent infinite loop
@@ -27,7 +35,10 @@ extension IMAPParser {
         return attributes
     }
 
-    func parseFetchAttribute(_ scanner: Scanner) throws -> IMAPResponse.FetchAttribute? {
+    func parseFetchAttribute(
+        _ scanner: Scanner,
+        literalDataQueue: inout [Data]?
+    ) throws -> IMAPResponse.FetchAttribute? {
         _ = scanner.scanCharacters(from: .whitespaces)
         guard let name = scanner.scanUpToCharacters(from: CharacterSet(charactersIn: " (")) else {
             return nil
@@ -61,6 +72,21 @@ extension IMAPParser {
             }
             return .rfc822Size(size)
 
+        case "RFC822":
+            let (data, consumed) = try parseFetchDataValue(scanner, literalDataQueue: &literalDataQueue)
+            guard consumed else { return nil }
+            return .body(section: nil, origin: nil, data: data)
+
+        case "RFC822.HEADER":
+            let (data, consumed) = try parseFetchDataValue(scanner, literalDataQueue: &literalDataQueue)
+            guard consumed else { return nil }
+            return .header(data ?? Data())
+
+        case "RFC822.TEXT":
+            let (data, consumed) = try parseFetchDataValue(scanner, literalDataQueue: &literalDataQueue)
+            guard consumed else { return nil }
+            return .text(data ?? Data())
+
         case "ENVELOPE":
             _ = scanner.scanCharacters(from: .whitespaces)
             let envelope = try parseEnvelopeData(scanner)
@@ -74,7 +100,11 @@ extension IMAPParser {
         default:
             // Check if this might be a BODY attribute
             if name.uppercased().hasPrefix("BODY") {
-                return try parseBodyAttribute(name: name, scanner: scanner)
+                return try parseBodyAttribute(
+                    name: name,
+                    scanner: scanner,
+                    literalDataQueue: &literalDataQueue
+                )
             }
 
             // Skip unknown attributes
@@ -83,66 +113,153 @@ extension IMAPParser {
         }
     }
 
-    func parseBodyAttribute(name: String, scanner: Scanner) throws -> IMAPResponse.FetchAttribute? {
+    func parseBodyAttribute(
+        name: String,
+        scanner: Scanner,
+        literalDataQueue: inout [Data]?
+    ) throws -> IMAPResponse.FetchAttribute? {
         // Parse BODY[section]<origin> or similar
         let upperName = name.uppercased()
         let isPeek = upperName.contains("PEEK")
 
         var section: String? = nil
         var origin: UInt32? = nil
+        var sectionIncomplete = false
 
-        // Check for section specifier
-        if scanner.scanString("[") != nil {
-            if let sectionStr = scanner.scanUpToString("]") {
-                section = sectionStr.isEmpty ? nil : sectionStr
+        if let sectionStart = name.firstIndex(of: "[") {
+            let contentStart = name.index(after: sectionStart)
+            if let sectionEnd = name[contentStart...].firstIndex(of: "]") {
+                section = String(name[contentStart..<sectionEnd])
+            } else {
+                section = String(name[contentStart...])
+                sectionIncomplete = true
+            }
+        }
+
+        if sectionIncomplete || (section == nil && scanner.scanString("[") != nil) {
+            if section == nil {
+                section = ""
+            }
+            if let sectionRemainder = scanner.scanUpToString("]") {
+                section = (section ?? "") + sectionRemainder
             }
             _ = scanner.scanString("]")
         }
 
-        // Check for origin
-        if scanner.scanString("<") != nil {
+        if let originStart = name.firstIndex(of: "<"),
+           let originEnd = name[originStart...].firstIndex(of: ">"),
+           originStart < originEnd {
+            let originString = name[name.index(after: originStart)..<originEnd]
+            origin = UInt32(originString)
+        }
+
+        if origin == nil, scanner.scanString("<") != nil {
             origin = scanner.scanUInt32()
             _ = scanner.scanString(">")
         }
 
-        _ = scanner.scanCharacters(from: .whitespaces)
+        if let trimmed = section?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            section = trimmed.isEmpty ? nil : trimmed
+        }
 
-        // Check for literal
-        if scanner.scanString("{") != nil {
-            guard scanner.scanInt() != nil else {
-                throw IMAPError.parsingError("Invalid literal size")
-            }
-            guard scanner.scanString("}") != nil else {
-                throw IMAPError.parsingError("Expected closing brace for literal")
+        let (data, consumed) = try parseFetchDataValue(scanner, literalDataQueue: &literalDataQueue)
+        guard consumed else {
+            return nil
+        }
+
+        if let section = section {
+            if let headerFields = parseHeaderFieldsSection(section) {
+                let payload = data ?? Data()
+                if headerFields.isNot {
+                    return .headerFieldsNot(fields: headerFields.fields, data: payload)
+                }
+                return .headerFields(fields: headerFields.fields, data: payload)
             }
 
-            // At this point, we need to read 'size' bytes from the buffer
-            // For now, we'll return a placeholder indicating we need a literal
-            if isPeek {
-                return .bodyPeek(section: section, origin: origin, data: nil)
-            } else {
-                return .body(section: section, origin: origin, data: nil)
-            }
-        } else if scanner.scanString("NIL") != nil {
-            // Body is NIL
-            if isPeek {
-                return .bodyPeek(section: section, origin: origin, data: nil)
-            } else {
-                return .body(section: section, origin: origin, data: nil)
-            }
-        } else if scanner.scanString("\"") != nil {
-            // Quoted string body (rare but possible for small bodies)
-            scanner.currentIndex = scanner.string.index(before: scanner.currentIndex)
-            let bodyStr = try parseQuotedString(scanner)
-            let data = Data(bodyStr.utf8)
-
-            if isPeek {
-                return .bodyPeek(section: section, origin: origin, data: data)
-            } else {
-                return .body(section: section, origin: origin, data: data)
+            switch section.uppercased() {
+            case "HEADER":
+                return .header(data ?? Data())
+            case "TEXT":
+                return .text(data ?? Data())
+            default:
+                break
             }
         }
 
-        return nil
+        if isPeek {
+            return .bodyPeek(section: section, origin: origin, data: data)
+        } else {
+            return .body(section: section, origin: origin, data: data)
+        }
+    }
+
+    private func parseFetchDataValue(
+        _ scanner: Scanner,
+        literalDataQueue: inout [Data]?
+    ) throws -> (Data?, Bool) {
+        let startIndex = scanner.currentIndex
+        _ = scanner.scanCharacters(from: .whitespaces)
+
+        if scanner.scanString("~LITERAL~") != nil {
+            guard var queue = literalDataQueue, !queue.isEmpty else {
+                throw IMAPError.parsingError("Missing literal data for placeholder")
+            }
+            let data = queue.removeFirst()
+            literalDataQueue = queue
+            return (data, true)
+        }
+
+        if scanner.scanString("NIL") != nil {
+            return (nil, true)
+        }
+
+        if scanner.scanString("\"") != nil {
+            scanner.currentIndex = scanner.string.index(before: scanner.currentIndex)
+            let bodyStr = try parseQuotedString(scanner)
+            return (Data(bodyStr.utf8), true)
+        }
+
+        scanner.currentIndex = startIndex
+        return (nil, false)
+    }
+
+    private func parseHeaderFieldsSection(
+        _ section: String
+    ) -> (fields: [String], isNot: Bool)? {
+        let scanner = Scanner(string: section)
+        scanner.charactersToBeSkipped = nil
+
+        guard let name = scanner.scanUpToCharacters(from: .whitespaces) else {
+            return nil
+        }
+
+        let upperName = name.uppercased()
+        let isNot = upperName == "HEADER.FIELDS.NOT"
+        guard upperName == "HEADER.FIELDS" || isNot else {
+            return nil
+        }
+
+        _ = scanner.scanCharacters(from: .whitespaces)
+        guard scanner.scanString("(") != nil else {
+            return nil
+        }
+
+        var fields: [String] = []
+
+        while scanner.scanString(")") == nil {
+            guard !scanner.isAtEnd else {
+                return nil
+            }
+
+            if let field = scanner.scanUpToCharacters(
+                from: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ")"))
+            ) {
+                fields.append(field)
+            }
+
+            _ = scanner.scanCharacters(from: .whitespaces)
+        }
+
+        return (fields, isNot)
     }
 }
