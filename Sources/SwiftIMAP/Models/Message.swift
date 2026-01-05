@@ -37,43 +37,6 @@ public enum Flag: String, Hashable, Sendable {
     case recent = "\\Recent"
 }
 
-public struct Envelope: Sendable {
-    public let date: Date?
-    public let subject: String?
-    public let from: [Address]
-    public let sender: [Address]
-    public let replyTo: [Address]
-    public let to: [Address]
-    public let cc: [Address]
-    public let bcc: [Address]
-    public let inReplyTo: String?
-    public let messageID: String?
-    
-    public init(
-        date: Date? = nil,
-        subject: String? = nil,
-        from: [Address] = [],
-        sender: [Address] = [],
-        replyTo: [Address] = [],
-        to: [Address] = [],
-        cc: [Address] = [],
-        bcc: [Address] = [],
-        inReplyTo: String? = nil,
-        messageID: String? = nil
-    ) {
-        self.date = date
-        self.subject = subject
-        self.from = from
-        self.sender = sender
-        self.replyTo = replyTo
-        self.to = to
-        self.cc = cc
-        self.bcc = bcc
-        self.inReplyTo = inReplyTo
-        self.messageID = messageID
-    }
-}
-
 public struct Address: Sendable, Hashable {
     public let name: String?
     public let mailbox: String
@@ -94,6 +57,66 @@ public struct Address: Sendable, Hashable {
             return "\(name) <\(emailAddress)>"
         }
         return emailAddress
+    }
+}
+
+public enum AddressListEntry: Sendable, Hashable {
+    case mailbox(Address)
+    case group(name: String, members: [Address])
+}
+
+public struct Envelope: Sendable {
+    public let date: Date?
+    public let subject: String?
+    public let from: [Address]
+    public let fromEntries: [AddressListEntry]
+    public let sender: [Address]
+    public let senderEntries: [AddressListEntry]
+    public let replyTo: [Address]
+    public let replyToEntries: [AddressListEntry]
+    public let to: [Address]
+    public let toEntries: [AddressListEntry]
+    public let cc: [Address]
+    public let ccEntries: [AddressListEntry]
+    public let bcc: [Address]
+    public let bccEntries: [AddressListEntry]
+    public let inReplyTo: String?
+    public let messageID: String?
+    
+    public init(
+        date: Date? = nil,
+        subject: String? = nil,
+        from: [Address] = [],
+        fromEntries: [AddressListEntry]? = nil,
+        sender: [Address] = [],
+        senderEntries: [AddressListEntry]? = nil,
+        replyTo: [Address] = [],
+        replyToEntries: [AddressListEntry]? = nil,
+        to: [Address] = [],
+        toEntries: [AddressListEntry]? = nil,
+        cc: [Address] = [],
+        ccEntries: [AddressListEntry]? = nil,
+        bcc: [Address] = [],
+        bccEntries: [AddressListEntry]? = nil,
+        inReplyTo: String? = nil,
+        messageID: String? = nil
+    ) {
+        self.date = date
+        self.subject = subject
+        self.from = from
+        self.fromEntries = fromEntries ?? from.map { .mailbox($0) }
+        self.sender = sender
+        self.senderEntries = senderEntries ?? sender.map { .mailbox($0) }
+        self.replyTo = replyTo
+        self.replyToEntries = replyToEntries ?? replyTo.map { .mailbox($0) }
+        self.to = to
+        self.toEntries = toEntries ?? to.map { .mailbox($0) }
+        self.cc = cc
+        self.ccEntries = ccEntries ?? cc.map { .mailbox($0) }
+        self.bcc = bcc
+        self.bccEntries = bccEntries ?? bcc.map { .mailbox($0) }
+        self.inReplyTo = inReplyTo
+        self.messageID = messageID
     }
 }
 

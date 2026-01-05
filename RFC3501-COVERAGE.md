@@ -30,7 +30,7 @@ Reference:
 - [x] INTERNALDATE (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] RFC822.SIZE (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] ENVELOPE (raw envelope parsing) (`Sources/SwiftIMAP/Protocol/IMAPParser+Envelope.swift`).
-- [ ] (partial) ENVELOPE group address semantics (groups are dropped at API mapping) (`Sources/SwiftIMAP/IMAPClient+Parsing.swift`).
+- [x] ENVELOPE group address semantics preserved in mapping (`Sources/SwiftIMAP/IMAPClient+Parsing.swift`).
 - [x] BODYSTRUCTURE with multipart parameters/disposition/language/extensions (`Sources/SwiftIMAP/Protocol/IMAPParser+BodyStructure.swift`).
 
 ## 4. Client Commands (RFC 6)
@@ -169,4 +169,6 @@ Reference:
 ---
 
 Planned next passes (suggested order):
-1) Envelope group address preservation in high-level mapping.
+1) Enforce legal command/state combinations.
+2) 8-bit/binary string handling in literals.
+3) AUTHENTICATE mechanism coverage.

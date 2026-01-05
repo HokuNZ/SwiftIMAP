@@ -51,34 +51,88 @@ extension IMAPClient {
 
         let date = data.date.flatMap { dateFormatter.date(from: $0) }
 
+        let fromList = parseAddressList(data.from)
+        let senderList = parseAddressList(data.sender)
+        let replyToList = parseAddressList(data.replyTo)
+        let toList = parseAddressList(data.to)
+        let ccList = parseAddressList(data.cc)
+        let bccList = parseAddressList(data.bcc)
+
         return Envelope(
             date: date,
             subject: data.subject,
-            from: parseAddresses(data.from),
-            sender: parseAddresses(data.sender),
-            replyTo: parseAddresses(data.replyTo),
-            to: parseAddresses(data.to),
-            cc: parseAddresses(data.cc),
-            bcc: parseAddresses(data.bcc),
+            from: fromList.flat,
+            fromEntries: fromList.entries,
+            sender: senderList.flat,
+            senderEntries: senderList.entries,
+            replyTo: replyToList.flat,
+            replyToEntries: replyToList.entries,
+            to: toList.flat,
+            toEntries: toList.entries,
+            cc: ccList.flat,
+            ccEntries: ccList.entries,
+            bcc: bccList.flat,
+            bccEntries: bccList.entries,
             inReplyTo: data.inReplyTo,
             messageID: data.messageID
         )
     }
 
-    func parseAddresses(_ addresses: [IMAPResponse.AddressData]?) -> [Address] {
-        guard let addresses = addresses else { return [] }
+    private struct ParsedAddressList {
+        let flat: [Address]
+        let entries: [AddressListEntry]
+    }
 
-        return addresses.compactMap { addr in
-            guard let mailbox = addr.mailbox,
-                  let host = addr.host else {
-                return nil
+    private func parseAddressList(_ addresses: [IMAPResponse.AddressData]?) -> ParsedAddressList {
+        guard let addresses = addresses else {
+            return ParsedAddressList(flat: [], entries: [])
+        }
+
+        var flat: [Address] = []
+        var entries: [AddressListEntry] = []
+
+        var currentGroupName: String?
+        var currentGroupMembers: [Address] = []
+
+        func finishGroupIfNeeded() {
+            guard let groupName = currentGroupName else { return }
+            entries.append(.group(name: groupName, members: currentGroupMembers))
+            currentGroupName = nil
+            currentGroupMembers = []
+        }
+
+        for addressData in addresses {
+            let mailbox = addressData.mailbox
+            let host = addressData.host
+
+            if mailbox == nil, host == nil {
+                finishGroupIfNeeded()
+                continue
             }
 
-            return Address(
-                name: addr.name,
-                mailbox: mailbox,
-                host: host
-            )
+            if host == nil, let groupName = mailbox {
+                finishGroupIfNeeded()
+                currentGroupName = groupName
+                currentGroupMembers = []
+                continue
+            }
+
+            guard let mailbox = mailbox, let host = host else {
+                continue
+            }
+
+            let address = Address(name: addressData.name, mailbox: mailbox, host: host)
+            flat.append(address)
+
+            if currentGroupName != nil {
+                currentGroupMembers.append(address)
+            } else {
+                entries.append(.mailbox(address))
+            }
         }
+
+        finishGroupIfNeeded()
+
+        return ParsedAddressList(flat: flat, entries: entries)
     }
 }
