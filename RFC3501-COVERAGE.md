@@ -23,7 +23,7 @@ Reference:
 - [x] Literal handling in commands (ASTRINGs using literals when needed) (`Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`).
 - [x] Parenthesized lists with quoted strings and nested lists (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
 - [x] NIL handling (`Sources/SwiftIMAP/Protocol/IMAPParser+Envelope.swift`).
-- [ ] (partial) 8-bit/binary strings (currently decoded as UTF-8 or ISO-8859-1 in literal placeholder).
+- [x] 8-bit/binary strings preserved via raw literal data capture (`Sources/SwiftIMAP/Protocol/IMAPParser.swift`).
 
 ## 3. Message Attributes (RFC 2.3)
 - [x] FLAGS (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).

@@ -14,16 +14,21 @@ extension IMAPParser {
         }
 
         // ENVELOPE format: (date subject from sender reply-to to cc bcc in-reply-to message-id)
-        let date = try parseNilOrQuotedString(scanner)
-        let subject = try parseNilOrQuotedString(scanner)
+        var rawDate: Data?
+        var rawSubject: Data?
+        var rawInReplyTo: Data?
+        var rawMessageID: Data?
+
+        let date = try parseNilOrQuotedString(scanner, literalData: &rawDate)
+        let subject = try parseNilOrQuotedString(scanner, literalData: &rawSubject)
         let from = try parseAddressList(scanner)
         let sender = try parseAddressList(scanner)
         let replyTo = try parseAddressList(scanner)
         let to = try parseAddressList(scanner)
         let cc = try parseAddressList(scanner)
         let bcc = try parseAddressList(scanner)
-        let inReplyTo = try parseNilOrQuotedString(scanner)
-        let messageID = try parseNilOrQuotedString(scanner)
+        let inReplyTo = try parseNilOrQuotedString(scanner, literalData: &rawInReplyTo)
+        let messageID = try parseNilOrQuotedString(scanner, literalData: &rawMessageID)
 
         guard scanner.scanString(")") != nil else {
             throw IMAPError.parsingError("Expected closing parenthesis for envelope")
@@ -39,11 +44,21 @@ extension IMAPParser {
             cc: cc,
             bcc: bcc,
             inReplyTo: inReplyTo,
-            messageID: messageID
+            messageID: messageID,
+            rawDate: rawDate,
+            rawSubject: rawSubject,
+            rawInReplyTo: rawInReplyTo,
+            rawMessageID: rawMessageID
         )
     }
 
     func parseNilOrQuotedString(_ scanner: Scanner) throws -> String? {
+        var literalData: Data?
+        return try parseNilOrQuotedString(scanner, literalData: &literalData)
+    }
+
+    func parseNilOrQuotedString(_ scanner: Scanner, literalData: inout Data?) throws -> String? {
+        literalData = nil
         _ = scanner.scanCharacters(from: .whitespaces)
 
         let currentPos = scanner.currentIndex
@@ -63,13 +78,19 @@ extension IMAPParser {
             scanner.currentIndex = currentPos
         }
 
-        return try parseNString(scanner)
+        return try parseNString(scanner, literalData: &literalData)
     }
 
     func parseNString(_ scanner: Scanner) throws -> String {
+        var literalData: Data?
+        return try parseNString(scanner, literalData: &literalData)
+    }
+
+    func parseNString(_ scanner: Scanner, literalData: inout Data?) throws -> String {
+        literalData = nil
         _ = scanner.scanCharacters(from: .whitespaces)
 
-        if let literal = try parseLiteralPlaceholder(scanner) {
+        if let literal = try parseLiteralPlaceholder(scanner, literalData: &literalData) {
             return literal
         }
 
@@ -138,10 +159,15 @@ extension IMAPParser {
 
         _ = scanner.scanCharacters(from: .whitespaces)
 
-        let name = try parseNilOrQuotedString(scanner)
-        let adl = try parseNilOrQuotedString(scanner)
-        let mailbox = try parseNilOrQuotedString(scanner)
-        let host = try parseNilOrQuotedString(scanner)
+        var rawName: Data?
+        var rawAdl: Data?
+        var rawMailbox: Data?
+        var rawHost: Data?
+
+        let name = try parseNilOrQuotedString(scanner, literalData: &rawName)
+        let adl = try parseNilOrQuotedString(scanner, literalData: &rawAdl)
+        let mailbox = try parseNilOrQuotedString(scanner, literalData: &rawMailbox)
+        let host = try parseNilOrQuotedString(scanner, literalData: &rawHost)
 
         _ = scanner.scanCharacters(from: .whitespaces)
         guard scanner.scanString(")") != nil else {
@@ -152,7 +178,11 @@ extension IMAPParser {
             name: name,
             adl: adl,
             mailbox: mailbox,
-            host: host
+            host: host,
+            rawName: rawName,
+            rawAdl: rawAdl,
+            rawMailbox: rawMailbox,
+            rawHost: rawHost
         )
     }
 }

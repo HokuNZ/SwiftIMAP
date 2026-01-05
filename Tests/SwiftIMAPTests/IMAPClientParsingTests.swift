@@ -7,11 +7,56 @@ final class IMAPClientParsingTests: XCTestCase {
         let client = IMAPClient(configuration: config)
 
         let addresses: [IMAPResponse.AddressData] = [
-            IMAPResponse.AddressData(name: nil, adl: nil, mailbox: "Friends", host: nil),
-            IMAPResponse.AddressData(name: "Alice", adl: nil, mailbox: "alice", host: "example.com"),
-            IMAPResponse.AddressData(name: "Bob", adl: nil, mailbox: "bob", host: "example.com"),
-            IMAPResponse.AddressData(name: nil, adl: nil, mailbox: nil, host: nil),
-            IMAPResponse.AddressData(name: "Carol", adl: nil, mailbox: "carol", host: "example.net")
+            IMAPResponse.AddressData(
+                name: nil,
+                adl: nil,
+                mailbox: "Friends",
+                host: nil,
+                rawName: nil,
+                rawAdl: nil,
+                rawMailbox: nil,
+                rawHost: nil
+            ),
+            IMAPResponse.AddressData(
+                name: "Alice",
+                adl: nil,
+                mailbox: "alice",
+                host: "example.com",
+                rawName: nil,
+                rawAdl: nil,
+                rawMailbox: nil,
+                rawHost: nil
+            ),
+            IMAPResponse.AddressData(
+                name: "Bob",
+                adl: nil,
+                mailbox: "bob",
+                host: "example.com",
+                rawName: nil,
+                rawAdl: nil,
+                rawMailbox: nil,
+                rawHost: nil
+            ),
+            IMAPResponse.AddressData(
+                name: nil,
+                adl: nil,
+                mailbox: nil,
+                host: nil,
+                rawName: nil,
+                rawAdl: nil,
+                rawMailbox: nil,
+                rawHost: nil
+            ),
+            IMAPResponse.AddressData(
+                name: "Carol",
+                adl: nil,
+                mailbox: "carol",
+                host: "example.net",
+                rawName: nil,
+                rawAdl: nil,
+                rawMailbox: nil,
+                rawHost: nil
+            )
         ]
 
         let envelopeData = IMAPResponse.EnvelopeData(
@@ -24,7 +69,11 @@ final class IMAPClientParsingTests: XCTestCase {
             cc: nil,
             bcc: nil,
             inReplyTo: nil,
-            messageID: nil
+            messageID: nil,
+            rawDate: nil,
+            rawSubject: nil,
+            rawInReplyTo: nil,
+            rawMessageID: nil
         )
 
         let envelope = client.parseEnvelope(envelopeData)

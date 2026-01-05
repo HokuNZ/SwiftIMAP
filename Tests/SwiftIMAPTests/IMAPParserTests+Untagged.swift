@@ -101,6 +101,7 @@ extension IMAPParserTests {
             XCTAssertEqual(listResponse.attributes, ["\\HasNoChildren"])
             XCTAssertEqual(listResponse.delimiter, "/")
             XCTAssertEqual(listResponse.name, "INBOX")
+            XCTAssertEqual(listResponse.rawName, Data("INBOX".utf8))
         } else {
             XCTFail("Expected LIST response")
         }

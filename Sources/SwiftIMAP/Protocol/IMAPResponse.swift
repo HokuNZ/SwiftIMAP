@@ -46,11 +46,13 @@ public enum IMAPResponse: Sendable, Equatable {
         public let attributes: [String]
         public let delimiter: String?
         public let name: String
+        public let rawName: Data?
         
-        public init(attributes: [String], delimiter: String?, name: String) {
+        public init(attributes: [String], delimiter: String?, name: String, rawName: Data? = nil) {
             self.attributes = attributes
             self.delimiter = delimiter
             self.name = name
+            self.rawName = rawName
         }
     }
     
@@ -80,6 +82,10 @@ public enum IMAPResponse: Sendable, Equatable {
         public let bcc: [AddressData]?
         public let inReplyTo: String?
         public let messageID: String?
+        public let rawDate: Data?
+        public let rawSubject: Data?
+        public let rawInReplyTo: Data?
+        public let rawMessageID: Data?
     }
     
     public struct AddressData: Sendable, Equatable {
@@ -87,6 +93,10 @@ public enum IMAPResponse: Sendable, Equatable {
         public let adl: String?
         public let mailbox: String?
         public let host: String?
+        public let rawName: Data?
+        public let rawAdl: Data?
+        public let rawMailbox: Data?
+        public let rawHost: Data?
     }
     
     public struct BodyStructureData: Sendable, Equatable {

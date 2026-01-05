@@ -76,15 +76,19 @@ extension IMAPParser {
     }
 
     func parseFetchAttributesWithLiteral(_ input: String, literalData: Data) throws -> [IMAPResponse.FetchAttribute] {
-        var literalDataQueue: [Data]? = [literalData]
-        return try parseFetchAttributesInternal(input, literalDataQueue: &literalDataQueue)
+        return try withLiteralQueue([literalData]) {
+            var literalDataQueue: [Data]? = nil
+            return try parseFetchAttributesInternal(input, literalDataQueue: &literalDataQueue)
+        }
     }
 
     func parseFetchAttributesWithMultipleLiterals(
         _ input: String,
         literalDataArray: [Data]
     ) throws -> [IMAPResponse.FetchAttribute] {
-        var literalDataQueue: [Data]? = literalDataArray
-        return try parseFetchAttributesInternal(input, literalDataQueue: &literalDataQueue)
+        return try withLiteralQueue(literalDataArray) {
+            var literalDataQueue: [Data]? = nil
+            return try parseFetchAttributesInternal(input, literalDataQueue: &literalDataQueue)
+        }
     }
 }

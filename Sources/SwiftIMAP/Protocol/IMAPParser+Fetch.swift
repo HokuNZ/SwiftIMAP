@@ -201,11 +201,13 @@ extension IMAPParser {
         _ = scanner.scanCharacters(from: .whitespaces)
 
         if scanner.scanString("~LITERAL~") != nil {
-            guard var queue = literalDataQueue, !queue.isEmpty else {
-                throw IMAPError.parsingError("Missing literal data for placeholder")
+            if var queue = literalDataQueue, !queue.isEmpty {
+                let data = queue.removeFirst()
+                literalDataQueue = queue
+                return (data, true)
             }
-            let data = queue.removeFirst()
-            literalDataQueue = queue
+
+            let data = try nextLiteralData()
             return (data, true)
         }
 

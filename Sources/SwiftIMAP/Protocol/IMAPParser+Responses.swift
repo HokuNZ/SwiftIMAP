@@ -228,9 +228,15 @@ extension IMAPParser {
 
         _ = scanner.scanCharacter()
 
-        let name = try parseAString(scanner)
+        var rawName: Data?
+        let name = try parseAString(scanner, literalData: &rawName)
 
-        return IMAPResponse.ListResponse(attributes: attributes, delimiter: delimiter, name: name)
+        return IMAPResponse.ListResponse(
+            attributes: attributes,
+            delimiter: delimiter,
+            name: name,
+            rawName: rawName
+        )
     }
 
     private func parseStatusResponse(_ input: String) throws -> (String, MailboxStatus) {

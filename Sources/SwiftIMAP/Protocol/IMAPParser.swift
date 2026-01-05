@@ -176,10 +176,10 @@ public final class IMAPParser {
         }
     }
 
-    private func withLiteralQueue(
+    func withLiteralQueue<T>(
         _ dataArray: [Data],
-        parse: () throws -> IMAPResponse?
-    ) rethrows -> IMAPResponse? {
+        parse: () throws -> T
+    ) rethrows -> T {
         let previousQueue = literalQueue
         literalQueue = dataArray
         defer { literalQueue = previousQueue }
@@ -194,11 +194,19 @@ public final class IMAPParser {
         return parts[1].uppercased() == "FETCH"
     }
 
-    func nextLiteralString() throws -> String {
+    func nextLiteralData() throws -> Data {
         guard !literalQueue.isEmpty else {
             throw IMAPError.parsingError("Missing literal data for placeholder")
         }
-        let data = literalQueue.removeFirst()
+        return literalQueue.removeFirst()
+    }
+
+    func nextLiteralString() throws -> String {
+        let data = try nextLiteralData()
+        return decodeLiteralData(data)
+    }
+
+    func decodeLiteralData(_ data: Data) -> String {
         if let decoded = String(data: data, encoding: .utf8) {
             return decoded
         }

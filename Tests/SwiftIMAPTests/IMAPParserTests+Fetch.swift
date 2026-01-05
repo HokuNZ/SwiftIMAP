@@ -116,4 +116,30 @@ extension IMAPParserTests {
             XCTAssertEqual(cc.name, "CC User")
         }
     }
+
+    func testParseEnvelopeWithBinaryLiteralSubject() throws {
+        let header = "* 1 FETCH (ENVELOPE (NIL {3}\r\n"
+        let literal = Data([0xFF, 0x00, 0x41])
+        let trailer = " NIL NIL NIL NIL NIL NIL NIL NIL))\r\nA001 OK\r\n"
+
+        parser.append(header.data(using: .utf8)!)
+        parser.append(literal)
+        parser.append(trailer.data(using: .utf8)!)
+
+        let responses = try parser.parseResponses()
+        XCTAssertEqual(responses.count, 2)
+
+        guard case .untagged(.fetch(_, let attributes)) = responses[0] else {
+            XCTFail("Expected FETCH response")
+            return
+        }
+
+        guard case .envelope(let envelope) = attributes.first else {
+            XCTFail("Expected ENVELOPE attribute")
+            return
+        }
+
+        XCTAssertEqual(envelope.rawSubject, literal)
+        XCTAssertEqual(envelope.subject, String(data: literal, encoding: .isoLatin1))
+    }
 }

@@ -73,16 +73,29 @@ extension IMAPParser {
     }
 
     func parseLiteralPlaceholder(_ scanner: Scanner) throws -> String? {
+        var literalData: Data?
+        return try parseLiteralPlaceholder(scanner, literalData: &literalData)
+    }
+
+    func parseLiteralPlaceholder(_ scanner: Scanner, literalData: inout Data?) throws -> String? {
         let currentPos = scanner.currentIndex
         if scanner.scanString("~LITERAL~") != nil {
-            return try nextLiteralString()
+            let data = try nextLiteralData()
+            literalData = data
+            return decodeLiteralData(data)
         }
         scanner.currentIndex = currentPos
         return nil
     }
 
     func parseAString(_ scanner: Scanner) throws -> String {
-        if let literal = try parseLiteralPlaceholder(scanner) {
+        var literalData: Data?
+        return try parseAString(scanner, literalData: &literalData)
+    }
+
+    func parseAString(_ scanner: Scanner, literalData: inout Data?) throws -> String {
+        literalData = nil
+        if let literal = try parseLiteralPlaceholder(scanner, literalData: &literalData) {
             return literal
         }
 
