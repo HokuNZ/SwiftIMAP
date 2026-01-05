@@ -13,7 +13,7 @@ Reference:
 
 ## 1. Protocol States and Flow (RFC 3)
 - [x] Track connection state (disconnected/connected/authenticated/selected) (`Sources/SwiftIMAP/Networking/ConnectionActor.swift`).
-- [ ] (partial) Enforce legal command/state combinations (currently not enforced beyond basic connected/continuation checks).
+- [x] Enforce legal command/state combinations (`Sources/SwiftIMAP/Protocol/IMAPCommandState.swift`).
 
 ## 2. Data Formats (RFC 4)
 - [x] Atom parsing for ASTRING/NSTRING (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
@@ -169,6 +169,5 @@ Reference:
 ---
 
 Planned next passes (suggested order):
-1) Enforce legal command/state combinations.
-2) 8-bit/binary string handling in literals.
-3) AUTHENTICATE mechanism coverage.
+1) 8-bit/binary string handling in literals.
+2) AUTHENTICATE mechanism coverage.

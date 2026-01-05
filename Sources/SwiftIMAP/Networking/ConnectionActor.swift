@@ -207,6 +207,9 @@ actor ConnectionActor {
         guard pendingContinuationTag == nil else {
             throw IMAPError.invalidState("Command continuation pending")
         }
+
+        let sessionState = mapSessionState()
+        try IMAPCommandStateValidator.validate(command: command, state: sessionState)
         
         let tag = nextTag()
         let imapCommand = IMAPCommand(tag: tag, command: command)
@@ -269,6 +272,19 @@ actor ConnectionActor {
     private func nextTag() -> String {
         commandTag += 1
         return String(format: "A%04d", commandTag)
+    }
+
+    private func mapSessionState() -> IMAPSessionState {
+        switch connectionState {
+        case .connected:
+            return .notAuthenticated
+        case .authenticated:
+            return .authenticated
+        case .selected:
+            return .selected
+        case .disconnected, .connecting:
+            return .notAuthenticated
+        }
     }
     
     private func sendCommandInternal(
