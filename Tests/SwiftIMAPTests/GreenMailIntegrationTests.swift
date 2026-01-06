@@ -195,6 +195,43 @@ final class GreenMailIntegrationTests: XCTestCase {
         let renamed = try await client.searchMessagesBySubject(subject, in: renamedMailbox)
         XCTAssertFalse(renamed.isEmpty)
     }
+
+    func testSearchByFromToAndSince() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Search")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let now = Date()
+        let oldDate = Calendar.current.date(byAdding: .day, value: -2, to: now) ?? now
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+
+        let oldFrom = "alice@example.com"
+        let oldTo = "bob@example.com"
+        let newFrom = "carol@example.com"
+        let newTo = "dave@example.com"
+
+        let oldSubject = "GreenMail Search Old \(UUID().uuidString.prefix(8))"
+        let newSubject = "GreenMail Search New \(UUID().uuidString.prefix(8))"
+
+        let oldMessage = makeMessage(subject: oldSubject, body: "OldBody", date: oldDate, from: oldFrom, to: oldTo)
+        let newMessage = makeMessage(subject: newSubject, body: "NewBody", date: now, from: newFrom, to: newTo)
+
+        try await client.appendMessage(oldMessage, to: mailbox, date: oldDate)
+        try await client.appendMessage(newMessage, to: mailbox, date: now)
+
+        let fromMatches = try await client.searchMessages(in: mailbox, criteria: .from(oldFrom))
+        XCTAssertTrue(fromMatches.contains { $0.envelope?.subject == oldSubject })
+
+        let toMatches = try await client.searchMessages(in: mailbox, criteria: .to(newTo))
+        XCTAssertTrue(toMatches.contains { $0.envelope?.subject == newSubject })
+
+        let sinceMatches = try await client.searchMessages(in: mailbox, criteria: .since(cutoffDate))
+        XCTAssertTrue(sinceMatches.contains { $0.envelope?.subject == newSubject })
+        XCTAssertFalse(sinceMatches.contains { $0.envelope?.subject == oldSubject })
+    }
 }
 
 private extension GreenMailIntegrationTests {
@@ -242,15 +279,21 @@ private extension GreenMailIntegrationTests {
         return client
     }
 
-    func makeMessage(subject: String, body: String, date: Date = Date()) -> Data {
+    func makeMessage(
+        subject: String,
+        body: String,
+        date: Date = Date(),
+        from: String = "test@example.com",
+        to: String = "test@example.com"
+    ) -> Data {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         let dateHeader = formatter.string(from: date)
 
         let lines = [
-            "From: test@example.com",
-            "To: test@example.com",
+            "From: \(from)",
+            "To: \(to)",
             "Subject: \(subject)",
             "Date: \(dateHeader)",
             "",
