@@ -44,11 +44,48 @@ extension IMAPClient {
         )
     }
 
+    /// Store raw flags (including custom keywords) for a message.
+    public func storeFlags(
+        uid: UID,
+        in mailbox: String,
+        flags: [String],
+        action: IMAPCommand.StoreFlags.Action = .set,
+        silent: Bool = false
+    ) async throws {
+        _ = try await selectMailbox(mailbox)
+
+        let storeFlags = IMAPCommand.StoreFlags(action: action, flags: flags)
+
+        _ = try await connection.sendCommand(
+            .uid(.store(sequence: .single(uid), flags: storeFlags, silent: silent))
+        )
+    }
+
     /// Store flags for multiple messages
     public func storeFlags(
         uids: [UID],
         in mailbox: String,
         flags: [Flag],
+        action: IMAPCommand.StoreFlags.Action = .set,
+        silent: Bool = false
+    ) async throws {
+        guard !uids.isEmpty else { return }
+
+        _ = try await selectMailbox(mailbox)
+
+        let storeFlags = IMAPCommand.StoreFlags(action: action, flags: flags)
+        let sequence = IMAPCommand.SequenceSet.set(uids)
+
+        _ = try await connection.sendCommand(
+            .uid(.store(sequence: sequence, flags: storeFlags, silent: silent))
+        )
+    }
+
+    /// Store raw flags (including custom keywords) for multiple messages.
+    public func storeFlags(
+        uids: [UID],
+        in mailbox: String,
+        flags: [String],
         action: IMAPCommand.StoreFlags.Action = .set,
         silent: Bool = false
     ) async throws {

@@ -122,6 +122,39 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertFalse(unreadAfter.contains { $0.uid == summary.uid })
     }
 
+    func testKeywordLabelSearchAndClear() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Labels")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let subject = "GreenMail Label \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(subject: subject, body: "LabelBody")
+        try await client.appendMessage(message, to: mailbox)
+
+        let matches = try await client.searchMessagesBySubject(subject, in: mailbox)
+        guard let uid = matches.first?.uid else {
+            XCTFail("Expected UID from subject search")
+            return
+        }
+
+        let keyword = "Label\(UUID().uuidString.prefix(6))"
+        try await client.storeFlags(uid: uid, in: mailbox, flags: [keyword], action: .add)
+
+        let keywordMatches = try await client.searchMessages(in: mailbox, criteria: .keyword(keyword))
+        XCTAssertTrue(keywordMatches.contains { $0.uid == uid })
+
+        try await client.storeFlags(uid: uid, in: mailbox, flags: [keyword], action: .remove, silent: true)
+
+        let keywordRemoved = try await client.searchMessages(in: mailbox, criteria: .keyword(keyword))
+        XCTAssertFalse(keywordRemoved.contains { $0.uid == uid })
+
+        let unkeywordMatches = try await client.searchMessages(in: mailbox, criteria: .unkeyword(keyword))
+        XCTAssertTrue(unkeywordMatches.contains { $0.uid == uid })
+    }
+
     func testCopyAndRenameMailbox() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
