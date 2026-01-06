@@ -121,7 +121,7 @@ public final class IMAPEncoder {
         parts.append(.text("AUTHENTICATE"))
         parts.append(.text(mechanism))
         if let response = initialResponse {
-            parts.append(.text(response))
+            parts.append(.text(response.isEmpty ? "=" : response))
         }
     }
 

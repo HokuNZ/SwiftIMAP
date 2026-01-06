@@ -42,7 +42,7 @@ Reference:
 
 ### 4.2 Not Authenticated (RFC 6.2)
 - [x] STARTTLS (`Sources/SwiftIMAP/IMAPClient+Connection.swift`).
-- [ ] (partial) AUTHENTICATE (multi-challenge supported, limited SASL mechanisms in client) (`Sources/SwiftIMAP/IMAPClient+Connection.swift`).
+- [x] AUTHENTICATE (multi-round SASL challenges; custom handler support) (`Sources/SwiftIMAP/IMAPClient+Connection.swift`).
 - [x] LOGIN (`Sources/SwiftIMAP/IMAPClient+Connection.swift`).
 
 ### 4.3 Authenticated (RFC 6.3)
@@ -169,5 +169,5 @@ Reference:
 ---
 
 Planned next passes (suggested order):
-1) 8-bit/binary string handling in literals.
-2) AUTHENTICATE mechanism coverage.
+1) Expand integration coverage (GreenMail + mock server parity).
+2) Review optional extensions (e.g., LITERAL+ / RFC 7888).

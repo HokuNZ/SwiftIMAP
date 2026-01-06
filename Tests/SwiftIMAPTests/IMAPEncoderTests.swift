@@ -277,6 +277,14 @@ final class IMAPEncoderTests: XCTestCase {
         
         XCTAssertEqual(result, "A021 AUTHENTICATE PLAIN AGFsaWNlAHdvbmRlcmxhbmQ=\r\n")
     }
+
+    func testEncodeAuthenticateCommandWithEmptyInitialResponse() throws {
+        let command = IMAPCommand(tag: "A021", command: .authenticate(mechanism: "EXTERNAL", initialResponse: ""))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+
+        XCTAssertEqual(result, "A021 AUTHENTICATE EXTERNAL =\r\n")
+    }
     
     func testEncodeCreateCommand() throws {
         let command = IMAPCommand(tag: "A022", command: .create(mailbox: "Work/Projects"))

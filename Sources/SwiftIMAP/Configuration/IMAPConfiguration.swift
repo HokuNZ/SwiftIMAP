@@ -37,11 +37,14 @@ public struct IMAPConfiguration: Sendable {
         case disabled
     }
     
+    public typealias SASLResponseHandler = @Sendable (String?) async throws -> String?
+
     public enum AuthMethod: Sendable {
         case plain(username: String, password: String)
         case login(username: String, password: String)
         case oauth2(username: String, accessToken: String)
         case external
+        case sasl(mechanism: String, initialResponse: String?, responseHandler: SASLResponseHandler)
     }
     
     public enum LogLevel: Int, Sendable, Comparable {

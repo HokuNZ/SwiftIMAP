@@ -90,7 +90,7 @@ actor ConnectionActor {
         let continuation: CheckedContinuation<[IMAPResponse], Error>
         var responses: [IMAPResponse] = []
         var continuationSequence: [Data]
-        var continuationHandler: ((String?) -> Data?)?
+        var continuationHandler: (@Sendable (String?) async throws -> String?)?
         let timeoutTask: Task<Void, Never>
     }
     
@@ -199,7 +199,7 @@ actor ConnectionActor {
     func sendCommand(
         _ command: IMAPCommand.Command,
         continuationResponse: String? = nil,
-        continuationHandler: ((String?) -> String?)? = nil
+        continuationHandler: (@Sendable (String?) async throws -> String?)? = nil
     ) async throws -> [IMAPResponse] {
         guard connectionState != .disconnected && connectionState != .connecting else {
             throw IMAPError.invalidState("Not connected")
@@ -290,7 +290,7 @@ actor ConnectionActor {
     private func sendCommandInternal(
         _ command: IMAPCommand,
         continuationResponse: String?,
-        continuationHandler: ((String?) -> String?)?,
+        continuationHandler: (@Sendable (String?) async throws -> String?)?,
         continuation: CheckedContinuation<[IMAPResponse], Error>
     ) async {
         do {
@@ -303,7 +303,6 @@ actor ConnectionActor {
 
             let crlf = Data([0x0D, 0x0A])
             var continuationSequence = encoded.continuationSegments
-            var continuationHandlerData: ((String?) -> Data?)?
 
             if let continuationResponse = continuationResponse {
                 guard continuationSequence.isEmpty else {
@@ -319,22 +318,14 @@ actor ConnectionActor {
                 continuationSequence = [data]
             }
 
-            if let continuationHandler = continuationHandler {
+            if continuationHandler != nil {
                 guard continuationSequence.isEmpty else {
                     continuation.resume(throwing: IMAPError.invalidState("Literal continuation already configured"))
                     return
                 }
-                continuationHandlerData = { responseText in
-                    guard let response = continuationHandler(responseText) else {
-                        return nil
-                    }
-                    var data = Data(response.utf8)
-                    data.append(crlf)
-                    return data
-                }
             }
 
-            if !continuationSequence.isEmpty || continuationHandlerData != nil {
+            if !continuationSequence.isEmpty || continuationHandler != nil {
                 guard pendingContinuationTag == nil else {
                     continuation.resume(throwing: IMAPError.invalidState("Another command is awaiting continuation"))
                     return
@@ -352,7 +343,7 @@ actor ConnectionActor {
                 command: command,
                 continuation: continuation,
                 continuationSequence: continuationSequence,
-                continuationHandler: continuationHandlerData,
+                continuationHandler: continuationHandler,
                 timeoutTask: timeoutTask
             )
             pendingCommands[command.tag] = pending
@@ -564,38 +555,48 @@ private extension ConnectionActor {
         }
 
         if let handler = pending.continuationHandler {
-            guard let data = handler(challenge) else {
-                await cancelContinuation(tag: tag, pending: pending)
-                return
-            }
-            pendingCommands[tag] = pending
             do {
+                guard let response = try await handler(challenge) else {
+                    guard pendingCommands[tag] != nil else {
+                        return
+                    }
+                    await cancelContinuation(
+                        tag: tag,
+                        pending: pending,
+                        error: IMAPError.authenticationFailed("SASL response handler returned nil")
+                    )
+                    return
+                }
+                guard pendingCommands[tag] != nil else {
+                    return
+                }
+                var data = Data(response.utf8)
+                data.append(contentsOf: [0x0D, 0x0A])
                 try await channel?.writeAndFlush(data)
             } catch {
                 guard pendingCommands[tag] != nil else {
                     return
                 }
-                pending.timeoutTask.cancel()
-                pendingCommands[tag] = nil
-                if pendingContinuationTag == tag {
-                    pendingContinuationTag = nil
-                }
-                pending.continuation.resume(throwing: error)
+                await cancelContinuation(tag: tag, pending: pending, error: error)
             }
             return
         }
 
-        await cancelContinuation(tag: tag, pending: pending)
+        await cancelContinuation(
+            tag: tag,
+            pending: pending,
+            error: IMAPError.invalidState("Missing continuation handler")
+        )
     }
 
-    private func cancelContinuation(tag: String, pending: PendingCommand) async {
+    private func cancelContinuation(tag: String, pending: PendingCommand, error: Error) async {
         pendingContinuationTag = nil
         pending.timeoutTask.cancel()
         pendingCommands[tag] = nil
 
         let cancelData = Data("*\r\n".utf8)
         _ = try? await channel?.writeAndFlush(cancelData)
-        pending.continuation.resume(throwing: IMAPError.invalidState("Missing continuation handler"))
+        pending.continuation.resume(throwing: error)
     }
     
     func handleTimeout(for tag: String) async {
