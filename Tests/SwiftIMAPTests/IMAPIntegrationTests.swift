@@ -9,6 +9,18 @@ final class IMAPIntegrationTests: XCTestCase {
     var eventLoopGroup: MultiThreadedEventLoopGroup!
     var mockServer: MockIMAPServer!
     var serverPort: Int!
+
+    private actor ChallengeRecorder {
+        private var challenges: [String?] = []
+
+        func record(_ value: String?) {
+            challenges.append(value)
+        }
+
+        func all() -> [String?] {
+            challenges
+        }
+    }
     
     override func setUp() async throws {
         try await super.setUp()
@@ -161,6 +173,49 @@ final class IMAPIntegrationTests: XCTestCase {
         let expectedAuth = Data("\0testuser\0testpass".utf8).base64EncodedString()
         XCTAssertEqual(mockServer.receivedContinuations.first ?? "", expectedAuth)
         XCTAssertEqual(mockServer.receivedContinuations.last ?? "", "")
+
+        await client.disconnect()
+    }
+
+    func testAuthenticateSaslHandlesMultipleChallenges() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=PLAIN")
+        mockServer.setAuthenticateChallenges(["first", "second", "third"])
+        mockServer.setAuthenticateResponse("OK AUTHENTICATE completed")
+
+        let recorder = ChallengeRecorder()
+        let handler: IMAPConfiguration.SASLResponseHandler = { challenge in
+            await recorder.record(challenge)
+            switch challenge {
+            case "second":
+                return "response-2"
+            case "third":
+                return "response-3"
+            default:
+                return ""
+            }
+        }
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .sasl(
+                mechanism: "PLAIN",
+                initialResponse: "initial",
+                responseHandler: handler
+            ),
+            logLevel: .debug
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+
+        let challenges = await recorder.all()
+
+        XCTAssertTrue(mockServer.receivedCommands.contains { $0.uppercased().contains("AUTHENTICATE PLAIN") })
+        XCTAssertEqual(mockServer.receivedContinuations, ["initial", "response-2", "response-3"])
+        XCTAssertEqual(challenges, ["second", "third"])
 
         await client.disconnect()
     }
