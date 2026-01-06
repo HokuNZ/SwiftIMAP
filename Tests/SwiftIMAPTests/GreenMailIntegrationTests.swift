@@ -232,6 +232,59 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertTrue(sinceMatches.contains { $0.envelope?.subject == newSubject })
         XCTAssertFalse(sinceMatches.contains { $0.envelope?.subject == oldSubject })
     }
+
+    func testSearchByCcBccHeaderWithCharset() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Headers")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let ccAddress = "cc-user@example.com"
+        let bccAddress = "bcc-user@example.com"
+        let headerName = "X-Tracking-ID"
+        let headerValue = "track-\(UUID().uuidString.prefix(8))"
+
+        let targetSubject = "GreenMail CC/BCC \(UUID().uuidString.prefix(8))"
+        let otherSubject = "GreenMail CC/BCC Other \(UUID().uuidString.prefix(8))"
+
+        let targetMessage = makeMessage(
+            subject: targetSubject,
+            body: "CCBody",
+            cc: ccAddress,
+            bcc: bccAddress,
+            additionalHeaders: ["\(headerName): \(headerValue)"]
+        )
+        let otherMessage = makeMessage(
+            subject: otherSubject,
+            body: "OtherBody",
+            cc: "other@example.com",
+            bcc: "otherbcc@example.com",
+            additionalHeaders: ["\(headerName): other-\(UUID().uuidString.prefix(6))"]
+        )
+
+        try await client.appendMessage(targetMessage, to: mailbox)
+        try await client.appendMessage(otherMessage, to: mailbox)
+
+        let charset = "UTF-8"
+
+        let ccMatches = try await client.searchMessages(in: mailbox, criteria: .cc(ccAddress), charset: charset)
+        XCTAssertTrue(ccMatches.contains { $0.envelope?.subject == targetSubject })
+        XCTAssertFalse(ccMatches.contains { $0.envelope?.subject == otherSubject })
+
+        let bccMatches = try await client.searchMessages(in: mailbox, criteria: .bcc(bccAddress), charset: charset)
+        XCTAssertTrue(bccMatches.contains { $0.envelope?.subject == targetSubject })
+        XCTAssertFalse(bccMatches.contains { $0.envelope?.subject == otherSubject })
+
+        let headerMatches = try await client.searchMessages(
+            in: mailbox,
+            criteria: .header(field: headerName, value: headerValue),
+            charset: charset
+        )
+        XCTAssertTrue(headerMatches.contains { $0.envelope?.subject == targetSubject })
+        XCTAssertFalse(headerMatches.contains { $0.envelope?.subject == otherSubject })
+    }
 }
 
 private extension GreenMailIntegrationTests {
@@ -284,21 +337,33 @@ private extension GreenMailIntegrationTests {
         body: String,
         date: Date = Date(),
         from: String = "test@example.com",
-        to: String = "test@example.com"
+        to: String = "test@example.com",
+        cc: String? = nil,
+        bcc: String? = nil,
+        additionalHeaders: [String] = []
     ) -> Data {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         let dateHeader = formatter.string(from: date)
 
-        let lines = [
+        var lines = [
             "From: \(from)",
             "To: \(to)",
             "Subject: \(subject)",
-            "Date: \(dateHeader)",
-            "",
-            body
+            "Date: \(dateHeader)"
         ]
+        if let cc {
+            lines.append("Cc: \(cc)")
+        }
+        if let bcc {
+            lines.append("Bcc: \(bcc)")
+        }
+        if !additionalHeaders.isEmpty {
+            lines.append(contentsOf: additionalHeaders)
+        }
+        lines.append("")
+        lines.append(body)
         return Data(lines.joined(separator: "\r\n").utf8)
     }
 

@@ -8,10 +8,11 @@ extension IMAPClient {
         in mailbox: String,
         criteria: IMAPCommand.SearchCriteria,
         fetchItems: [IMAPCommand.FetchItem] = [.uid, .flags, .internalDate, .rfc822Size, .envelope],
-        limit: Int? = nil
+        limit: Int? = nil,
+        charset: String? = nil
     ) async throws -> [MessageSummary] {
         // First, get the sequence numbers matching the criteria
-        let sequenceNumbers = try await listMessages(in: mailbox, searchCriteria: criteria)
+        let sequenceNumbers = try await listMessages(in: mailbox, searchCriteria: criteria, charset: charset)
 
         guard !sequenceNumbers.isEmpty else {
             return []
@@ -40,10 +41,17 @@ extension IMAPClient {
         in mailbox: String,
         matching allCriteria: [IMAPCommand.SearchCriteria],
         fetchItems: [IMAPCommand.FetchItem] = [.uid, .flags, .internalDate, .rfc822Size, .envelope],
-        limit: Int? = nil
+        limit: Int? = nil,
+        charset: String? = nil
     ) async throws -> [MessageSummary] {
         let criteria: IMAPCommand.SearchCriteria = allCriteria.count == 1 ? allCriteria[0] : .and(allCriteria)
-        return try await searchMessages(in: mailbox, criteria: criteria, fetchItems: fetchItems, limit: limit)
+        return try await searchMessages(
+            in: mailbox,
+            criteria: criteria,
+            fetchItems: fetchItems,
+            limit: limit,
+            charset: charset
+        )
     }
 
     /// Search for messages from a specific sender

@@ -3,7 +3,8 @@ import Foundation
 extension IMAPClient {
     public func listMessages(
         in mailbox: String,
-        searchCriteria: IMAPCommand.SearchCriteria = .all
+        searchCriteria: IMAPCommand.SearchCriteria = .all,
+        charset: String? = nil
     ) async throws -> [MessageSequenceNumber] {
         try await retryHandler.executeWithReconnect(
             operation: "listMessages",
@@ -16,7 +17,7 @@ extension IMAPClient {
             work: {
                 _ = try await self.selectMailbox(mailbox)
 
-                let responses = try await self.connection.sendCommand(.search(charset: nil, criteria: searchCriteria))
+                let responses = try await self.connection.sendCommand(.search(charset: charset, criteria: searchCriteria))
 
                 for response in responses {
                     if case .untagged(.search(let numbers)) = response {
