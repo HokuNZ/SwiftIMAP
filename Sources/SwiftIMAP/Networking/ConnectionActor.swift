@@ -246,8 +246,11 @@ actor ConnectionActor {
     }
     
     func setAuthenticated() {
-        if case .connected = connectionState {
+        switch connectionState {
+        case .connected, .selected:
             connectionState = .authenticated
+        case .authenticated, .disconnected, .connecting:
+            break
         }
     }
     

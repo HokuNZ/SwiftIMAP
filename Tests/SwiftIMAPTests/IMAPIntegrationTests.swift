@@ -388,6 +388,88 @@ final class IMAPIntegrationTests: XCTestCase {
         
         await client.disconnect()
     }
+
+    func testSelectParsesUntaggedStatusCodes() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: """
+            * 5 EXISTS
+            * 2 RECENT
+            * OK [UNSEEN 2]
+            * OK [UIDVALIDITY 999]
+            * OK [UIDNEXT 6]
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        let status = try await client.selectMailbox("INBOX")
+        XCTAssertEqual(status.messages, 5)
+        XCTAssertEqual(status.recent, 2)
+        XCTAssertEqual(status.unseen, 2)
+        XCTAssertEqual(status.uidValidity, 999)
+        XCTAssertEqual(status.uidNext, 6)
+        await client.disconnect()
+    }
+
+    func testExamineSubscribeAndCloseMailbox() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "EXAMINE \"INBOX\"", response: """
+            * 2 EXISTS
+            * 0 RECENT
+            """)
+        mockServer.setResponse(for: "CHECK", response: "OK CHECK completed")
+        mockServer.setResponse(for: "CLOSE", response: "OK CLOSE completed")
+        mockServer.setResponse(for: "SUBSCRIBE", response: "OK SUBSCRIBE completed")
+        mockServer.setResponse(for: "UNSUBSCRIBE", response: "OK UNSUBSCRIBE completed")
+        mockServer.setResponse(for: "LSUB", response: """
+            * LSUB () "/" "INBOX"
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+
+        let status = try await client.examineMailbox("INBOX")
+        XCTAssertEqual(status.messages, 2)
+        XCTAssertEqual(status.recent, 0)
+
+        try await client.checkMailbox()
+        try await client.closeMailbox()
+
+        do {
+            try await client.checkMailbox()
+            XCTFail("Expected CHECK to fail after CLOSE")
+        } catch {
+            if case IMAPError.invalidState = error {
+                XCTAssertTrue(true)
+            } else {
+                XCTFail("Expected invalidState error")
+            }
+        }
+
+        try await client.subscribeMailbox("INBOX")
+        let subscribed = try await client.listSubscribedMailboxes()
+        XCTAssertTrue(subscribed.contains { $0.name == "INBOX" })
+        try await client.unsubscribeMailbox("INBOX")
+
+        await client.disconnect()
+    }
 }
 
 // MARK: - Mock IMAP Server
