@@ -9,6 +9,7 @@ A modern, pure-Swift IMAP client library with async/await support. SwiftIMAP pro
 - **Type-Safe**: Strongly typed commands and responses
 - **Secure by Default**: TLS 1.2+ with certificate validation
 - **Memory Efficient**: Streaming support for large messages
+- **Custom Labels**: IMAP keywords via raw flag support
 - **Well-Tested**: Comprehensive unit test coverage
 
 ## Requirements
@@ -24,7 +25,7 @@ Add SwiftIMAP to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yourusername/SwiftIMAP.git", from: "0.1.0")
+    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "0.1.0")
 ]
 ```
 
@@ -149,6 +150,16 @@ let config = IMAPConfiguration(
 
 // External (client certificate)
 .external
+
+// Custom SASL flow
+.sasl(
+    mechanism: "PLAIN",
+    initialResponse: "base64-encoded",
+    responseHandler: { challenge in
+        // Return Base64-encoded response or "" for an empty response
+        return "next-base64-response"
+    }
+)
 ```
 
 ### Working with Mailboxes
@@ -196,6 +207,12 @@ let bodyData = try await client.fetchMessageBody(
     in: "INBOX",
     peek: true  // Don't mark as read
 )
+
+// Add/remove custom label (IMAP keyword)
+try await client.storeFlags(uid: 12345, in: "INBOX", flags: ["ProjectA"], action: .add)
+let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("ProjectA"))
+
+// Labels map to IMAP keywords (Gmail's X-GM-LABELS extension is not implemented)
 ```
 
 ## Testing
@@ -231,6 +248,10 @@ SwiftIMAP is built with a layered architecture:
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Disclosure
+
+This repository is LLM-generated code, and we have done our best to be accurate, but 🤷‍♂️ it works for us.
+
 ## License
 
-SwiftIMAP is released under the Apache 2.0 license. See LICENSE for details.
+SwiftIMAP is released under the MIT license. See LICENSE for details.
