@@ -285,6 +285,54 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertTrue(headerMatches.contains { $0.envelope?.subject == targetSubject })
         XCTAssertFalse(headerMatches.contains { $0.envelope?.subject == otherSubject })
     }
+
+    func testBulkCopyMoveAndUidExpunge() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let sourceMailbox = makeMailboxName(prefix: "BulkSource")
+        let copyMailbox = makeMailboxName(prefix: "BulkCopy")
+        let moveMailbox = makeMailboxName(prefix: "BulkMove")
+
+        try await client.createMailbox(sourceMailbox)
+        try await client.createMailbox(copyMailbox)
+        try await client.createMailbox(moveMailbox)
+        defer {
+            Task {
+                try? await client.deleteMailbox(sourceMailbox)
+                try? await client.deleteMailbox(copyMailbox)
+                try? await client.deleteMailbox(moveMailbox)
+            }
+        }
+
+        let subject = "GreenMail Bulk \(UUID().uuidString.prefix(8))"
+        for index in 1...3 {
+            let message = makeMessage(subject: subject, body: "BulkBody-\(index)")
+            try await client.appendMessage(message, to: sourceMailbox)
+        }
+
+        let sourceMessages = try await client.searchMessagesBySubject(subject, in: sourceMailbox)
+        XCTAssertEqual(sourceMessages.count, 3)
+
+        let sourceUids = sourceMessages.map(\.uid)
+        try await client.copyMessages(uids: sourceUids, from: sourceMailbox, to: copyMailbox)
+
+        let copied = try await client.searchMessagesBySubject(subject, in: copyMailbox)
+        XCTAssertEqual(copied.count, 3)
+
+        try await client.moveMessages(uids: sourceUids, from: sourceMailbox, to: moveMailbox)
+        try? await client.expunge(mailbox: sourceMailbox)
+
+        let moved = try await client.searchMessagesBySubject(subject, in: moveMailbox)
+        XCTAssertEqual(moved.count, 3)
+
+        let deleteUids = moved.prefix(2).map(\.uid)
+        try await client.storeFlags(uids: deleteUids, in: moveMailbox, flags: [.deleted], action: .add)
+        try await client.expunge(uids: deleteUids, in: moveMailbox)
+
+        let remaining = try await client.searchMessagesBySubject(subject, in: moveMailbox)
+        XCTAssertEqual(remaining.count, 1)
+    }
 }
 
 private extension GreenMailIntegrationTests {

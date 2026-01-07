@@ -185,6 +185,21 @@ extension IMAPClient {
         _ = try await connection.sendCommand(.expunge)
     }
 
+    /// Permanently delete specific messages, using UID EXPUNGE when supported.
+    public func expunge(uids: [UID], in mailbox: String) async throws {
+        guard !uids.isEmpty else { return }
+
+        _ = try await selectMailbox(mailbox)
+
+        let capabilities = try await capability()
+        if capabilities.contains("UIDPLUS") {
+            let sequence = IMAPCommand.SequenceSet.set(uids)
+            _ = try await connection.sendCommand(.uid(.expunge(sequence: sequence)))
+        } else {
+            _ = try await connection.sendCommand(.expunge)
+        }
+    }
+
     /// Delete a message (mark as deleted and expunge)
     public func deleteMessage(uid: UID, in mailbox: String) async throws {
         try await markForDeletion(uid: uid, in: mailbox)
