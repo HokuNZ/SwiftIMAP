@@ -79,7 +79,7 @@ Reference:
 - [x] EXISTS (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
 - [x] RECENT (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
 - [x] EXPUNGE (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
-- [ ] (partial) FETCH (see section 6) (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
+- [x] FETCH (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] Continuation response (`+`) (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
 
 ### 5.1 Response Codes (RFC 7.1)

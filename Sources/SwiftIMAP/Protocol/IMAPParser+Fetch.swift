@@ -97,6 +97,11 @@ extension IMAPParser {
             let bodyStructure = try parseBodyStructure(scanner)
             return .bodyStructure(bodyStructure)
 
+        case "BODY":
+            _ = scanner.scanCharacters(from: .whitespaces)
+            let bodyStructure = try parseBodyStructure(scanner)
+            return .bodyStructure(bodyStructure)
+
         default:
             // Check if this might be a BODY attribute
             if name.uppercased().hasPrefix("BODY") {
