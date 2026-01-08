@@ -286,6 +286,49 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertFalse(headerMatches.contains { $0.envelope?.subject == otherSubject })
     }
 
+    func testSearchWithUtf8LiteralText() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Utf8Search")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let token = "caf\u{00E9}-\(UUID().uuidString.prefix(8))"
+        let subject = "GreenMail UTF8 \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(
+            subject: subject,
+            body: "Body \(token)",
+            additionalHeaders: [
+                "Content-Type: text/plain; charset=UTF-8",
+                "Content-Transfer-Encoding: 8bit"
+            ]
+        )
+        try await client.appendMessage(message, to: mailbox)
+
+        let matches = try await client.searchMessages(in: mailbox, criteria: .text(token), charset: "UTF-8")
+        XCTAssertTrue(matches.contains { $0.envelope?.subject == subject })
+    }
+
+    func testUtf7MailboxNameRoundTrip() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = "SwiftIMAP-UTF7-\u{00DF}-\(UUID().uuidString.prefix(8))"
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let mailboxes = try await client.listMailboxes()
+        XCTAssertTrue(mailboxes.contains { $0.name == mailbox })
+
+        let subject = "GreenMail UTF7 \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(subject: subject, body: "UTF7Body")
+        try await client.appendMessage(message, to: mailbox)
+
+        let matches = try await client.searchMessagesBySubject(subject, in: mailbox)
+        XCTAssertTrue(matches.contains { $0.envelope?.subject == subject })
+    }
+
     func testBulkCopyMoveAndUidExpunge() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
