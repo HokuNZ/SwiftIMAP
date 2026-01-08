@@ -497,4 +497,17 @@ final class IMAPEncoderTests: XCTestCase {
         
         XCTAssertEqual(result, "A107 UID SEARCH FLAGGED\r\n")
     }
+
+    func testEncodeSearchHeaderWithUtf8Literal() throws {
+        let criteria = IMAPCommand.SearchCriteria.header(field: "X-Note", value: "caf\u{00E9}")
+        let command = IMAPCommand(tag: "A108", command: .search(charset: "UTF-8", criteria: criteria))
+        let encoded = try encoder.encodeCommandSegments(command)
+
+        XCTAssertEqual(
+            String(data: encoded.initialData, encoding: .utf8),
+            "A108 SEARCH CHARSET UTF-8 HEADER X-Note {5}\r\n"
+        )
+        XCTAssertEqual(encoded.continuationSegments.count, 1)
+        XCTAssertEqual(String(data: encoded.continuationSegments[0], encoding: .utf8), "café\r\n")
+    }
 }

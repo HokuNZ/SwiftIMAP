@@ -310,6 +310,34 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertTrue(matches.contains { $0.envelope?.subject == subject })
     }
 
+    func testSearchHeaderWithCharset() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "HeaderLiteral")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let headerName = "X-Search-Note"
+        let token = "note-\(UUID().uuidString.prefix(8))"
+        let subject = "GreenMail Header Literal \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(
+            subject: subject,
+            body: "HeaderBody",
+            additionalHeaders: [
+                "\(headerName): \(token)"
+            ]
+        )
+        try await client.appendMessage(message, to: mailbox)
+
+        let matches = try await client.searchMessages(
+            in: mailbox,
+            criteria: .header(field: headerName, value: token),
+            charset: "UTF-8"
+        )
+        XCTAssertTrue(matches.contains { $0.envelope?.subject == subject })
+    }
+
     func testUtf7MailboxNameRoundTrip() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
@@ -327,6 +355,34 @@ final class GreenMailIntegrationTests: XCTestCase {
 
         let matches = try await client.searchMessagesBySubject(subject, in: mailbox)
         XCTAssertTrue(matches.contains { $0.envelope?.subject == subject })
+    }
+
+    func testUtf7RenameAndLsub() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let original = "SwiftIMAP-UTF7-\u{00DF}-\(UUID().uuidString.prefix(8))"
+        let renamed = "SwiftIMAP-UTF7-\u{00FC}-\(UUID().uuidString.prefix(8))"
+        try await client.createMailbox(original)
+        defer {
+            Task {
+                try? await client.deleteMailbox(original)
+                try? await client.deleteMailbox(renamed)
+            }
+        }
+
+        try await client.subscribeMailbox(original)
+        let subscribed = try await client.listSubscribedMailboxes()
+        XCTAssertTrue(subscribed.contains { $0.name == original })
+
+        try await client.renameMailbox(from: original, to: renamed)
+
+        let mailboxes = try await client.listMailboxes()
+        XCTAssertTrue(mailboxes.contains { $0.name == renamed })
+
+        try await client.subscribeMailbox(renamed)
+        let subscribedAfter = try await client.listSubscribedMailboxes()
+        XCTAssertTrue(subscribedAfter.contains { $0.name == renamed })
     }
 
     func testBulkCopyMoveAndUidExpunge() async throws {
