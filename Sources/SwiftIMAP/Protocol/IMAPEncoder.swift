@@ -187,8 +187,8 @@ public final class IMAPEncoder {
         literalMode: LiteralMode
     ) {
         parts.append(.text("LIST"))
-        parts.append(encodeAStringPart(reference, forceQuote: true, literalMode: literalMode))
-        parts.append(encodeListPatternPart(pattern, literalMode: literalMode))
+        parts.append(encodeMailboxReferencePart(reference, forceQuote: true, literalMode: literalMode))
+        parts.append(encodeMailboxPatternPart(pattern, literalMode: literalMode))
     }
 
     private func appendLsubParts(
@@ -198,8 +198,8 @@ public final class IMAPEncoder {
         literalMode: LiteralMode
     ) {
         parts.append(.text("LSUB"))
-        parts.append(encodeAStringPart(reference, forceQuote: false, literalMode: literalMode))
-        parts.append(encodeListPatternPart(pattern, literalMode: literalMode))
+        parts.append(encodeMailboxReferencePart(reference, forceQuote: false, literalMode: literalMode))
+        parts.append(encodeMailboxPatternPart(pattern, literalMode: literalMode))
     }
 
     private func appendStatusParts(
@@ -467,14 +467,27 @@ public final class IMAPEncoder {
         return .text(quote(value, force: forceQuote))
     }
 
-    private func encodeListPatternPart(
+    private func encodeMailboxReferencePart(
+        _ reference: String,
+        forceQuote: Bool,
+        literalMode: LiteralMode
+    ) -> CommandPart {
+        let encoded = IMAPMailboxNameCodec.encode(reference)
+        if requiresLiteral(encoded) {
+            return encodeLiteralPart(Data(encoded.utf8), literalMode: literalMode)
+        }
+        return .text(quote(encoded, force: forceQuote))
+    }
+
+    private func encodeMailboxPatternPart(
         _ pattern: String,
         literalMode: LiteralMode
     ) -> CommandPart {
-        if requiresLiteral(pattern) {
-            return encodeLiteralPart(Data(pattern.utf8), literalMode: literalMode)
+        let encoded = IMAPMailboxNameCodec.encode(pattern)
+        if requiresLiteral(encoded) {
+            return encodeLiteralPart(Data(encoded.utf8), literalMode: literalMode)
         }
-        return .text(encodeListPattern(pattern))
+        return .text(encodeListPattern(encoded))
     }
 
     private func encodeLiteralPart(_ data: Data, literalMode: LiteralMode) -> CommandPart {

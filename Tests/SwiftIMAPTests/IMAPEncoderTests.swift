@@ -103,6 +103,22 @@ final class IMAPEncoderTests: XCTestCase {
         
         XCTAssertEqual(result, "A009 LIST \"INBOX\" %\r\n")
     }
+
+    func testEncodeListCommandWithUtf7Reference() throws {
+        let command = IMAPCommand(tag: "A009A", command: .list(reference: "Archive/ß", pattern: "*"))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+
+        XCTAssertEqual(result, "A009A LIST \"Archive/&AN8-\" *\r\n")
+    }
+
+    func testEncodeListCommandWithUtf7Pattern() throws {
+        let command = IMAPCommand(tag: "A009B", command: .list(reference: "", pattern: "SwiftIMAP-ß*"))
+        let encoded = try encoder.encode(command)
+        let result = String(data: encoded, encoding: .utf8)
+
+        XCTAssertEqual(result, "A009B LIST \"\" \"SwiftIMAP-&AN8-*\"\r\n")
+    }
     
     func testEncodeStatusCommand() throws {
         let command = IMAPCommand(tag: "A010", command: .status(
