@@ -164,7 +164,7 @@ Reference:
 - [x] IDLE (RFC 2177) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] MOVE (RFC 6851) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] UID EXPUNGE (RFC 4315) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
-- [ ] LITERAL+ (RFC 7888) non-synchronizing literals not implemented.
+- [x] LITERAL+ (RFC 7888) non-synchronizing literals when capability advertised.
 
 ---
 

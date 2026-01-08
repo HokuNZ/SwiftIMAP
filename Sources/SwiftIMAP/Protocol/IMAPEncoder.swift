@@ -7,6 +7,11 @@ struct IMAPEncodedCommand {
 
 public final class IMAPEncoder {
     public init() {}
+
+    enum LiteralMode {
+        case synchronizing
+        case nonSynchronizing
+    }
     
     public func encode(_ command: IMAPCommand) throws -> Data {
         let encoded = try encodeCommandSegments(command)
@@ -16,27 +21,37 @@ public final class IMAPEncoder {
         return encoded.initialData
     }
 
-    func encodeCommandSegments(_ command: IMAPCommand) throws -> IMAPEncodedCommand {
-        let parts = try encodeCommandParts(command)
+    func encodeCommandSegments(
+        _ command: IMAPCommand,
+        literalMode: LiteralMode = .synchronizing
+    ) throws -> IMAPEncodedCommand {
+        let parts = try encodeCommandParts(command, literalMode: literalMode)
         return encodeParts(parts)
     }
 
     private enum CommandPart {
         case text(String)
-        case literal(Data)
+        case literal(Data, isNonSync: Bool)
     }
 
-    private func encodeCommandParts(_ command: IMAPCommand) throws -> [CommandPart] {
+    private func encodeCommandParts(
+        _ command: IMAPCommand,
+        literalMode: LiteralMode
+    ) throws -> [CommandPart] {
         if case .done = command.command {
             return [.text("DONE")]
         }
 
         var parts: [CommandPart] = [.text(command.tag)]
-        appendCommandParts(&parts, command: command.command)
+        appendCommandParts(&parts, command: command.command, literalMode: literalMode)
         return parts
     }
 
-    private func appendCommandParts(_ parts: inout [CommandPart], command: IMAPCommand.Command) {
+    private func appendCommandParts(
+        _ parts: inout [CommandPart],
+        command: IMAPCommand.Command,
+        literalMode: LiteralMode
+    ) {
         switch command {
         case .capability, .noop, .logout, .starttls, .check, .close, .expunge, .idle:
             parts.append(.text(simpleCommandName(for: command)))
@@ -45,7 +60,7 @@ public final class IMAPEncoder {
             appendAuthenticateParts(&parts, mechanism: mechanism, initialResponse: initialResponse)
 
         case .login(let username, let password):
-            appendLoginParts(&parts, username: username, password: password)
+            appendLoginParts(&parts, username: username, password: password, literalMode: literalMode)
 
         case .select(let mailbox),
              .examine(let mailbox),
@@ -59,16 +74,16 @@ public final class IMAPEncoder {
             appendRenameParts(&parts, from: from, to: to)
 
         case .list(let reference, let pattern):
-            appendListParts(&parts, reference: reference, pattern: pattern)
+            appendListParts(&parts, reference: reference, pattern: pattern, literalMode: literalMode)
 
         case .lsub(let reference, let pattern):
-            appendLsubParts(&parts, reference: reference, pattern: pattern)
+            appendLsubParts(&parts, reference: reference, pattern: pattern, literalMode: literalMode)
 
         case .status(let mailbox, let items):
             appendStatusParts(&parts, mailbox: mailbox, items: items)
 
         case .append(let mailbox, let flags, let date, let data):
-            appendAppendParts(&parts, mailbox: mailbox, flags: flags, date: date, data: data)
+            appendAppendParts(&parts, mailbox: mailbox, flags: flags, date: date, data: data, literalMode: literalMode)
 
         case .search(let charset, let criteria):
             appendSearchParts(&parts, charset: charset, criteria: criteria)
@@ -125,10 +140,15 @@ public final class IMAPEncoder {
         }
     }
 
-    private func appendLoginParts(_ parts: inout [CommandPart], username: String, password: String) {
+    private func appendLoginParts(
+        _ parts: inout [CommandPart],
+        username: String,
+        password: String,
+        literalMode: LiteralMode
+    ) {
         parts.append(.text("LOGIN"))
-        parts.append(encodeAStringPart(username, forceQuote: true))
-        parts.append(encodeAStringPart(password, forceQuote: true))
+        parts.append(encodeAStringPart(username, forceQuote: true, literalMode: literalMode))
+        parts.append(encodeAStringPart(password, forceQuote: true, literalMode: literalMode))
     }
 
     private func appendMailboxParts(
@@ -150,25 +170,43 @@ public final class IMAPEncoder {
         parts.append(.text(encodeMailboxName(mailbox)))
     }
 
-    private func appendRenameParts(_ parts: inout [CommandPart], from: String, to: String) {
+    private func appendRenameParts(
+        _ parts: inout [CommandPart],
+        from: String,
+        to: String
+    ) {
         parts.append(.text("RENAME"))
         parts.append(.text(encodeMailboxName(from)))
         parts.append(.text(encodeMailboxName(to)))
     }
 
-    private func appendListParts(_ parts: inout [CommandPart], reference: String, pattern: String) {
+    private func appendListParts(
+        _ parts: inout [CommandPart],
+        reference: String,
+        pattern: String,
+        literalMode: LiteralMode
+    ) {
         parts.append(.text("LIST"))
-        parts.append(encodeAStringPart(reference, forceQuote: true))
-        parts.append(encodeListPatternPart(pattern))
+        parts.append(encodeAStringPart(reference, forceQuote: true, literalMode: literalMode))
+        parts.append(encodeListPatternPart(pattern, literalMode: literalMode))
     }
 
-    private func appendLsubParts(_ parts: inout [CommandPart], reference: String, pattern: String) {
+    private func appendLsubParts(
+        _ parts: inout [CommandPart],
+        reference: String,
+        pattern: String,
+        literalMode: LiteralMode
+    ) {
         parts.append(.text("LSUB"))
-        parts.append(encodeAStringPart(reference, forceQuote: false))
-        parts.append(encodeListPatternPart(pattern))
+        parts.append(encodeAStringPart(reference, forceQuote: false, literalMode: literalMode))
+        parts.append(encodeListPatternPart(pattern, literalMode: literalMode))
     }
 
-    private func appendStatusParts(_ parts: inout [CommandPart], mailbox: String, items: [IMAPCommand.StatusItem]) {
+    private func appendStatusParts(
+        _ parts: inout [CommandPart],
+        mailbox: String,
+        items: [IMAPCommand.StatusItem]
+    ) {
         parts.append(.text("STATUS"))
         parts.append(.text(encodeMailboxName(mailbox)))
         parts.append(.text("(" + items.map { $0.rawValue }.joined(separator: " ") + ")"))
@@ -179,7 +217,8 @@ public final class IMAPEncoder {
         mailbox: String,
         flags: [String]?,
         date: Date?,
-        data: Data
+        data: Data,
+        literalMode: LiteralMode
     ) {
         parts.append(.text("APPEND"))
         parts.append(.text(encodeMailboxName(mailbox)))
@@ -192,7 +231,7 @@ public final class IMAPEncoder {
             parts.append(.text(quote(formatInternalDate(date))))
         }
 
-        parts.append(.literal(data))
+        parts.append(encodeLiteralPart(data, literalMode: literalMode))
     }
 
     private func appendSearchParts(
@@ -242,22 +281,37 @@ public final class IMAPEncoder {
                     initialData.append(contentsOf: (prefix + text).utf8)
                 }
 
-            case .literal(let data):
-                let marker = "\(prefix){\(data.count)}"
-                if !hasLiteral {
-                    initialData.append(contentsOf: marker.utf8)
-                    initialData.append(crlf)
-                    hasLiteral = true
-                    currentContinuation = Data()
-                    currentContinuation?.append(data)
-                } else {
-                    if var continuation = currentContinuation {
-                        continuation.append(contentsOf: marker.utf8)
-                        continuation.append(crlf)
-                        continuationSegments.append(continuation)
+            case .literal(let data, let isNonSync):
+                let marker = "\(prefix){\(data.count)\(isNonSync ? "+" : "")}"
+                if isNonSync {
+                    if hasLiteral {
+                        if currentContinuation == nil {
+                            currentContinuation = Data()
+                        }
+                        currentContinuation?.append(contentsOf: marker.utf8)
+                        currentContinuation?.append(crlf)
+                        currentContinuation?.append(data)
+                    } else {
+                        initialData.append(contentsOf: marker.utf8)
+                        initialData.append(crlf)
+                        initialData.append(data)
                     }
-                    currentContinuation = Data()
-                    currentContinuation?.append(data)
+                } else {
+                    if !hasLiteral {
+                        initialData.append(contentsOf: marker.utf8)
+                        initialData.append(crlf)
+                        hasLiteral = true
+                        currentContinuation = Data()
+                        currentContinuation?.append(data)
+                    } else {
+                        if var continuation = currentContinuation {
+                            continuation.append(contentsOf: marker.utf8)
+                            continuation.append(crlf)
+                            continuationSegments.append(continuation)
+                        }
+                        currentContinuation = Data()
+                        currentContinuation?.append(data)
+                    }
                 }
             }
         }
@@ -274,18 +328,30 @@ public final class IMAPEncoder {
         return IMAPEncodedCommand(initialData: initialData, continuationSegments: continuationSegments)
     }
 
-    private func encodeAStringPart(_ value: String, forceQuote: Bool) -> CommandPart {
+    private func encodeAStringPart(
+        _ value: String,
+        forceQuote: Bool,
+        literalMode: LiteralMode
+    ) -> CommandPart {
         if requiresLiteral(value) {
-            return .literal(Data(value.utf8))
+            return encodeLiteralPart(Data(value.utf8), literalMode: literalMode)
         }
         return .text(quote(value, force: forceQuote))
     }
 
-    private func encodeListPatternPart(_ pattern: String) -> CommandPart {
+    private func encodeListPatternPart(
+        _ pattern: String,
+        literalMode: LiteralMode
+    ) -> CommandPart {
         if requiresLiteral(pattern) {
-            return .literal(Data(pattern.utf8))
+            return encodeLiteralPart(Data(pattern.utf8), literalMode: literalMode)
         }
         return .text(encodeListPattern(pattern))
+    }
+
+    private func encodeLiteralPart(_ data: Data, literalMode: LiteralMode) -> CommandPart {
+        let isNonSync = literalMode == .nonSynchronizing
+        return .literal(data, isNonSync: isNonSync)
     }
 
     func quote(_ string: String, force: Bool = false) -> String {

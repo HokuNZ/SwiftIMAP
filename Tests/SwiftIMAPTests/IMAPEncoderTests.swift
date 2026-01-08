@@ -60,6 +60,17 @@ final class IMAPEncoderTests: XCTestCase {
             "user\nname \"pass\"\r\n"
         )
     }
+
+    func testEncodeLoginCommandWithNonSyncLiteralAString() throws {
+        let command = IMAPCommand(tag: "A021", command: .login(username: "user\nname", password: "pass"))
+        let encoded = try encoder.encodeCommandSegments(command, literalMode: .nonSynchronizing)
+
+        XCTAssertTrue(encoded.continuationSegments.isEmpty)
+        XCTAssertEqual(
+            String(data: encoded.initialData, encoding: .utf8),
+            "A021 LOGIN {9+}\r\nuser\nname \"pass\"\r\n"
+        )
+    }
     
     func testEncodeSelectCommand() throws {
         let command = IMAPCommand(tag: "A006", command: .select(mailbox: "INBOX"))

@@ -297,7 +297,10 @@ actor ConnectionActor {
         continuation: CheckedContinuation<[IMAPResponse], Error>
     ) async {
         do {
-            let encoded = try encoder.encodeCommandSegments(command)
+            let literalMode: IMAPEncoder.LiteralMode = serverCapabilities.contains("LITERAL+")
+                ? .nonSynchronizing
+                : .synchronizing
+            let encoded = try encoder.encodeCommandSegments(command, literalMode: literalMode)
             
             guard let channel = channel else {
                 continuation.resume(throwing: IMAPError.disconnected)
