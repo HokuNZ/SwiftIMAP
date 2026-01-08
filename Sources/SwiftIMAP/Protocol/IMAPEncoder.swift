@@ -86,7 +86,7 @@ public final class IMAPEncoder {
             appendAppendParts(&parts, mailbox: mailbox, flags: flags, date: date, data: data, literalMode: literalMode)
 
         case .search(let charset, let criteria):
-            appendSearchParts(&parts, charset: charset, criteria: criteria)
+            appendSearchParts(&parts, charset: charset, criteria: criteria, literalMode: literalMode)
 
         case .fetch(let sequence, let items):
             parts.append(.text("FETCH"))
@@ -104,7 +104,7 @@ public final class IMAPEncoder {
 
         case .uid(let uidCommand):
             parts.append(.text("UID"))
-            parts.append(contentsOf: encodeUIDCommandParts(uidCommand))
+            parts.append(contentsOf: encodeUIDCommandParts(uidCommand, literalMode: literalMode))
 
         case .done:
             break
@@ -237,14 +237,133 @@ public final class IMAPEncoder {
     private func appendSearchParts(
         _ parts: inout [CommandPart],
         charset: String?,
-        criteria: IMAPCommand.SearchCriteria
+        criteria: IMAPCommand.SearchCriteria,
+        literalMode: LiteralMode
     ) {
         parts.append(.text("SEARCH"))
         if let charset = charset {
             parts.append(.text("CHARSET"))
-            parts.append(.text(charset))
+            parts.append(encodeAStringPart(charset, forceQuote: false, literalMode: literalMode))
         }
-        parts.append(.text(encodeSearchCriteria(criteria)))
+        appendSearchCriteriaParts(&parts, criteria: criteria, literalMode: literalMode, wrapIfNeeded: false)
+    }
+
+    private func appendSearchCriteriaParts(
+        _ parts: inout [CommandPart],
+        criteria: IMAPCommand.SearchCriteria,
+        literalMode: LiteralMode,
+        wrapIfNeeded: Bool
+    ) {
+        switch criteria {
+        case .all:
+            parts.append(.text("ALL"))
+        case .answered:
+            parts.append(.text("ANSWERED"))
+        case .deleted:
+            parts.append(.text("DELETED"))
+        case .draft:
+            parts.append(.text("DRAFT"))
+        case .flagged:
+            parts.append(.text("FLAGGED"))
+        case .new:
+            parts.append(.text("NEW"))
+        case .old:
+            parts.append(.text("OLD"))
+        case .recent:
+            parts.append(.text("RECENT"))
+        case .seen:
+            parts.append(.text("SEEN"))
+        case .unanswered:
+            parts.append(.text("UNANSWERED"))
+        case .undeleted:
+            parts.append(.text("UNDELETED"))
+        case .undraft:
+            parts.append(.text("UNDRAFT"))
+        case .unflagged:
+            parts.append(.text("UNFLAGGED"))
+        case .unseen:
+            parts.append(.text("UNSEEN"))
+        case .keyword(let keyword):
+            parts.append(.text("KEYWORD"))
+            parts.append(.text(keyword))
+        case .unkeyword(let keyword):
+            parts.append(.text("UNKEYWORD"))
+            parts.append(.text(keyword))
+        case .before(let date):
+            parts.append(.text("BEFORE"))
+            parts.append(.text(formatSearchDate(date)))
+        case .on(let date):
+            parts.append(.text("ON"))
+            parts.append(.text(formatSearchDate(date)))
+        case .since(let date):
+            parts.append(.text("SINCE"))
+            parts.append(.text(formatSearchDate(date)))
+        case .sentBefore(let date):
+            parts.append(.text("SENTBEFORE"))
+            parts.append(.text(formatSearchDate(date)))
+        case .sentOn(let date):
+            parts.append(.text("SENTON"))
+            parts.append(.text(formatSearchDate(date)))
+        case .sentSince(let date):
+            parts.append(.text("SENTSINCE"))
+            parts.append(.text(formatSearchDate(date)))
+        case .from(let address):
+            parts.append(.text("FROM"))
+            parts.append(encodeAStringPart(address, forceQuote: false, literalMode: literalMode))
+        case .to(let address):
+            parts.append(.text("TO"))
+            parts.append(encodeAStringPart(address, forceQuote: false, literalMode: literalMode))
+        case .cc(let address):
+            parts.append(.text("CC"))
+            parts.append(encodeAStringPart(address, forceQuote: false, literalMode: literalMode))
+        case .bcc(let address):
+            parts.append(.text("BCC"))
+            parts.append(encodeAStringPart(address, forceQuote: false, literalMode: literalMode))
+        case .subject(let text):
+            parts.append(.text("SUBJECT"))
+            parts.append(encodeAStringPart(text, forceQuote: true, literalMode: literalMode))
+        case .body(let text):
+            parts.append(.text("BODY"))
+            parts.append(encodeAStringPart(text, forceQuote: true, literalMode: literalMode))
+        case .text(let text):
+            parts.append(.text("TEXT"))
+            parts.append(encodeAStringPart(text, forceQuote: true, literalMode: literalMode))
+        case .header(let field, let value):
+            parts.append(.text("HEADER"))
+            parts.append(encodeAStringPart(field, forceQuote: false, literalMode: literalMode))
+            parts.append(encodeAStringPart(value, forceQuote: false, literalMode: literalMode))
+        case .larger(let size):
+            parts.append(.text("LARGER"))
+            parts.append(.text(String(size)))
+        case .smaller(let size):
+            parts.append(.text("SMALLER"))
+            parts.append(.text(String(size)))
+        case .uid(let sequence):
+            parts.append(.text("UID"))
+            parts.append(.text(sequence.stringValue))
+        case .not(let nested):
+            parts.append(.text("NOT"))
+            appendSearchCriteriaParts(&parts, criteria: nested, literalMode: literalMode, wrapIfNeeded: true)
+        case .or(let criteria1, let criteria2):
+            parts.append(.text("OR"))
+            appendSearchCriteriaParts(&parts, criteria: criteria1, literalMode: literalMode, wrapIfNeeded: true)
+            appendSearchCriteriaParts(&parts, criteria: criteria2, literalMode: literalMode, wrapIfNeeded: true)
+        case .and(let criteriaList):
+            guard !criteriaList.isEmpty else { return }
+            if wrapIfNeeded && criteriaList.count > 1 {
+                parts.append(.text("("))
+                for criteria in criteriaList {
+                    appendSearchCriteriaParts(&parts, criteria: criteria, literalMode: literalMode, wrapIfNeeded: false)
+                }
+                parts.append(.text(")"))
+            } else {
+                for criteria in criteriaList {
+                    appendSearchCriteriaParts(&parts, criteria: criteria, literalMode: literalMode, wrapIfNeeded: false)
+                }
+            }
+        case .sequence(let set):
+            parts.append(.text(set.stringValue))
+        }
     }
 
     private func appendCopyMoveParts(
@@ -270,9 +389,16 @@ public final class IMAPEncoder {
         var continuationSegments: [Data] = []
         var currentContinuation: Data?
         var hasLiteral = false
+        var previousWasOpenParen = false
 
         for (index, part) in parts.enumerated() {
-            let prefix = index == 0 ? "" : " "
+            var isOpenParen = false
+            var isCloseParen = false
+            if case .text(let text) = part {
+                isOpenParen = text == "("
+                isCloseParen = text == ")"
+            }
+            let prefix = index == 0 || previousWasOpenParen || isCloseParen ? "" : " "
             switch part {
             case .text(let text):
                 if hasLiteral {
@@ -314,6 +440,8 @@ public final class IMAPEncoder {
                     }
                 }
             }
+
+            previousWasOpenParen = isOpenParen
         }
 
         if hasLiteral {
@@ -397,6 +525,13 @@ public final class IMAPEncoder {
         }
         return quote(pattern)
     }
+
+    private func formatSearchDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd-MMM-yyyy"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return quote(formatter.string(from: date))
+    }
     
     private func formatInternalDate(_ date: Date) -> String {
         let formatter = DateFormatter()
@@ -477,7 +612,10 @@ public final class IMAPEncoder {
         return action + suffix + " " + flagList
     }
     
-    private func encodeUIDCommandParts(_ command: IMAPCommand.UIDCommand) -> [CommandPart] {
+    private func encodeUIDCommandParts(
+        _ command: IMAPCommand.UIDCommand,
+        literalMode: LiteralMode
+    ) -> [CommandPart] {
         switch command {
         case .copy(let sequence, let mailbox):
             return [.text("COPY"), .text(sequence.stringValue), .text(encodeMailboxName(mailbox))]
@@ -489,9 +627,9 @@ public final class IMAPEncoder {
             var parts: [CommandPart] = [.text("SEARCH")]
             if let charset = charset {
                 parts.append(.text("CHARSET"))
-                parts.append(.text(charset))
+                parts.append(encodeAStringPart(charset, forceQuote: false, literalMode: literalMode))
             }
-            parts.append(.text(encodeSearchCriteria(criteria)))
+            appendSearchCriteriaParts(&parts, criteria: criteria, literalMode: literalMode, wrapIfNeeded: false)
             return parts
         case .store(let sequence, let flags, let silent):
             return [.text("STORE"), .text(sequence.stringValue), .text(encodeStoreFlags(flags, silent: silent))]

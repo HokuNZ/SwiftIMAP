@@ -20,7 +20,7 @@ Reference:
 - [x] Number parsing (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
 - [x] Quoted string parsing with escapes (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
 - [x] Literal handling in responses (single/multiple literals) (`Sources/SwiftIMAP/Protocol/IMAPParser.swift`, `Sources/SwiftIMAP/Protocol/IMAPParser+Literal.swift`).
-- [x] Literal handling in commands (ASTRINGs using literals when needed) (`Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`).
+- [x] Literal handling in commands (ASTRINGs/strings using literals when needed) (`Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`).
 - [x] Parenthesized lists with quoted strings and nested lists (`Sources/SwiftIMAP/Protocol/IMAPParser+Scanner.swift`).
 - [x] NIL handling (`Sources/SwiftIMAP/Protocol/IMAPParser+Envelope.swift`).
 - [x] 8-bit/binary strings preserved via raw literal data capture (`Sources/SwiftIMAP/Protocol/IMAPParser.swift`).

@@ -278,7 +278,7 @@ final class IMAPEncoderTests: XCTestCase {
         let encoded = try encoder.encode(command)
         let result = String(data: encoded, encoding: .utf8)
         
-        XCTAssertEqual(result, "A020 SEARCH OR FROM \"alice@example.com\" SUBJECT \"Important\" UNSEEN\r\n")
+        XCTAssertEqual(result, "A020 SEARCH OR FROM \"alice@example.com\" (SUBJECT \"Important\" UNSEEN)\r\n")
     }
     
     func testEncodeAuthenticateCommand() throws {
@@ -483,10 +483,11 @@ final class IMAPEncoderTests: XCTestCase {
     
     func testEncodeSearchWithCharset() throws {
         let command = IMAPCommand(tag: "A106", command: .search(charset: "UTF-8", criteria: .text("café")))
-        let encoded = try encoder.encode(command)
-        let result = String(data: encoded, encoding: .utf8)
-        
-        XCTAssertEqual(result, "A106 SEARCH CHARSET UTF-8 TEXT \"café\"\r\n")
+        let encoded = try encoder.encodeCommandSegments(command)
+
+        XCTAssertEqual(String(data: encoded.initialData, encoding: .utf8), "A106 SEARCH CHARSET UTF-8 TEXT {5}\r\n")
+        XCTAssertEqual(encoded.continuationSegments.count, 1)
+        XCTAssertEqual(String(data: encoded.continuationSegments[0], encoding: .utf8), "café\r\n")
     }
     
     func testEncodeUIDSearchFlaggedCommand() throws {
