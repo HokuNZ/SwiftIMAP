@@ -81,6 +81,7 @@ Reference:
 - [x] EXPUNGE (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
 - [x] FETCH (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] Continuation response (`+`) (`Sources/SwiftIMAP/Protocol/IMAPParser+Responses.swift`).
+- [x] SELECT/EXAMINE mailbox flags, permanent flags, and access mode captured in `MailboxStatus` (`Sources/SwiftIMAP/IMAPClient+Mailboxes.swift`).
 
 ### 5.1 Response Codes (RFC 7.1)
 - [x] ALERT

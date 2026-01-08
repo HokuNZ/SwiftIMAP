@@ -119,6 +119,9 @@ private extension IMAPClient {
         var uidNext: UInt32 = 0
         var uidValidity: UInt32 = 0
         var unseen: UInt32 = 0
+        var flags: [String]? = nil
+        var permanentFlags: [String]? = nil
+        var access: MailboxStatus.Access? = nil
         
         func applyStatusCode(_ code: IMAPResponse.ResponseCode?) {
             guard let code = code else { return }
@@ -129,7 +132,13 @@ private extension IMAPClient {
                 uidValidity = uid
             case .unseen(let num):
                 unseen = num
-            case .permanentFlags, .alert, .badCharset, .capability, .parse, .readOnly, .readWrite, .tryCreate, .other:
+            case .permanentFlags(let flagsList):
+                permanentFlags = flagsList
+            case .readOnly:
+                access = .readOnly
+            case .readWrite:
+                access = .readWrite
+            case .alert, .badCharset, .capability, .parse, .tryCreate, .other:
                 break
             }
         }
@@ -142,8 +151,8 @@ private extension IMAPClient {
                     exists = count
                 case .recent(let count):
                     recent = count
-                case .flags:
-                    break
+                case .flags(let flagList):
+                    flags = flagList
                 case .status(let status):
                     if case .ok(let code, _) = status {
                         applyStatusCode(code)
@@ -170,7 +179,10 @@ private extension IMAPClient {
             recent: recent,
             uidNext: uidNext,
             uidValidity: uidValidity,
-            unseen: unseen
+            unseen: unseen,
+            flags: flags,
+            permanentFlags: permanentFlags,
+            access: access
         )
     }
 }

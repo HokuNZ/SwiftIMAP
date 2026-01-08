@@ -419,6 +419,39 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testSelectParsesFlagsAndAccess() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: """
+            * 3 EXISTS
+            * FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)
+            * OK [PERMANENTFLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft \\*)]
+            * OK [READ-WRITE]
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        let status = try await client.selectMailbox("INBOX")
+
+        XCTAssertEqual(status.messages, 3)
+        XCTAssertEqual(status.access, .readWrite)
+        XCTAssertEqual(Set(status.flags ?? []), Set(["\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft"]))
+        XCTAssertEqual(
+            Set(status.permanentFlags ?? []),
+            Set(["\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft", "\\*"])
+        )
+
+        await client.disconnect()
+    }
+
     func testExamineSubscribeAndCloseMailbox() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")

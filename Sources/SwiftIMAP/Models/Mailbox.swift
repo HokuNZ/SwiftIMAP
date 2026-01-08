@@ -34,23 +34,37 @@ public struct Mailbox: Hashable, Sendable {
 }
 
 public struct MailboxStatus: Sendable, Equatable {
+    public enum Access: String, Sendable {
+        case readOnly
+        case readWrite
+    }
+
     public let messages: UInt32
     public let recent: UInt32
     public let uidNext: UInt32
     public let uidValidity: UInt32
     public let unseen: UInt32
+    public let flags: [String]?
+    public let permanentFlags: [String]?
+    public let access: Access?
     
     public init(
         messages: UInt32,
         recent: UInt32,
         uidNext: UInt32,
         uidValidity: UInt32,
-        unseen: UInt32
+        unseen: UInt32,
+        flags: [String]? = nil,
+        permanentFlags: [String]? = nil,
+        access: Access? = nil
     ) {
         self.messages = messages
         self.recent = recent
         self.uidNext = uidNext
         self.uidValidity = uidValidity
         self.unseen = unseen
+        self.flags = flags
+        self.permanentFlags = permanentFlags
+        self.access = access
     }
 }
