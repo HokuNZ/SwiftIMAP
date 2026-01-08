@@ -99,7 +99,7 @@ actor ConnectionActor {
         case connecting
         case connected
         case authenticated
-        case selected(mailbox: String)
+        case selected(mailbox: String, readOnly: Bool)
     }
     
     init(configuration: IMAPConfiguration, tlsConfiguration: TLSConfiguration) {
@@ -240,8 +240,8 @@ actor ConnectionActor {
             return "connected"
         case .authenticated:
             return "authenticated"
-        case .selected(let mailbox):
-            return "selected(\(mailbox))"
+        case .selected(let mailbox, let readOnly):
+            return "selected(\(mailbox), readOnly: \(readOnly))"
         }
     }
     
@@ -254,8 +254,8 @@ actor ConnectionActor {
         }
     }
     
-    func setSelected(mailbox: String) {
-        connectionState = .selected(mailbox: mailbox)
+    func setSelected(mailbox: String, readOnly: Bool) {
+        connectionState = .selected(mailbox: mailbox, readOnly: readOnly)
     }
     
     private func updateCapabilities(_ caps: Set<String>) async {
@@ -283,8 +283,8 @@ actor ConnectionActor {
             return .notAuthenticated
         case .authenticated:
             return .authenticated
-        case .selected:
-            return .selected
+        case .selected(_, let readOnly):
+            return .selected(readOnly: readOnly)
         case .disconnected, .connecting:
             return .notAuthenticated
         }

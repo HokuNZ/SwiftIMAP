@@ -74,7 +74,8 @@ extension IMAPClient {
     public func selectMailbox(_ mailbox: String) async throws -> MailboxStatus {
         let responses = try await connection.sendCommand(.select(mailbox: mailbox))
         let status = parseMailboxStatus(from: responses)
-        await connection.setSelected(mailbox: mailbox)
+        let readOnly = status.access == .readOnly
+        await connection.setSelected(mailbox: mailbox, readOnly: readOnly)
 
         return status
     }
@@ -82,7 +83,7 @@ extension IMAPClient {
     public func examineMailbox(_ mailbox: String) async throws -> MailboxStatus {
         let responses = try await connection.sendCommand(.examine(mailbox: mailbox))
         let status = parseMailboxStatus(from: responses)
-        await connection.setSelected(mailbox: mailbox)
+        await connection.setSelected(mailbox: mailbox, readOnly: true)
 
         return status
     }
