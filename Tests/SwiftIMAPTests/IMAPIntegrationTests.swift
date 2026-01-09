@@ -589,6 +589,132 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testSearchHelpersWithMockServer() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "SEARCH", response: "* SEARCH 1 2")
+        mockServer.setResponse(for: "FETCH", response: """
+            * 1 FETCH (UID 10 FLAGS (\\Seen) INTERNALDATE "01-Jan-2024 12:00:00 +0000" RFC822.SIZE 100 ENVELOPE ("Mon, 1 Jan 2024 12:00:00 +0000" "Search Subject" (("Sender" NIL "sender" "example.com")) NIL NIL (("Recipient" NIL "recipient" "example.com")) NIL NIL NIL "<search-id@example.com>"))
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+
+        let limited = try await client.searchMessages(in: "INBOX", criteria: .all, limit: 1)
+        XCTAssertEqual(limited.count, 1)
+
+        let singleCriteria = try await client.searchMessages(in: "INBOX", matching: [.from("sender@example.com")])
+        XCTAssertEqual(singleCriteria.count, 2)
+
+        let andCriteria = try await client.searchMessages(in: "INBOX", matching: [.from("sender@example.com"), .subject("Search Subject")])
+        XCTAssertEqual(andCriteria.count, 2)
+
+        let fromMatches = try await client.searchMessagesFrom("sender@example.com", in: "INBOX")
+        XCTAssertEqual(fromMatches.count, 2)
+
+        let subjectMatches = try await client.searchMessagesBySubject("Search Subject", in: "INBOX")
+        XCTAssertEqual(subjectMatches.count, 2)
+
+        let textMatches = try await client.searchMessagesByText("Body", in: "INBOX")
+        XCTAssertEqual(textMatches.count, 2)
+
+        let sinceMatches = try await client.searchMessagesSince(Date(), in: "INBOX")
+        XCTAssertEqual(sinceMatches.count, 2)
+
+        let unreadMatches = try await client.searchUnreadMessages(in: "INBOX")
+        XCTAssertEqual(unreadMatches.count, 2)
+
+        let flaggedMatches = try await client.searchFlaggedMessages(in: "INBOX")
+        XCTAssertEqual(flaggedMatches.count, 2)
+
+        let complexMatches = try await client.searchMessagesComplex(
+            in: "INBOX",
+            from: "sender@example.com",
+            subject: "Search Subject",
+            flags: [.seen],
+            excludeFlags: [.flagged]
+        )
+        XCTAssertEqual(complexMatches.count, 2)
+
+        let complexAll = try await client.searchMessagesComplex(in: "INBOX")
+        XCTAssertEqual(complexAll.count, 2)
+
+        await client.disconnect()
+    }
+
+    func testMessageOperationsWithMockServer() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LITERAL+ MOVE UIDPLUS")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "APPEND", response: "OK APPEND completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK UID STORE completed")
+        mockServer.setResponse(for: "UID COPY", response: "OK UID COPY completed")
+        mockServer.setResponse(for: "UID MOVE", response: "OK UID MOVE completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK UID EXPUNGE completed")
+        mockServer.setResponse(for: "EXPUNGE", response: "OK EXPUNGE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+
+        let message = """
+            From: sender@example.com
+            To: recipient@example.com
+            Subject: Mock Append
+            Date: Mon, 1 Jan 2024 12:00:00 +0000
+
+            Body
+            """
+        try await client.appendMessage(message, to: "INBOX", flags: [.seen], date: Date())
+
+        try await client.storeFlags(uid: 1, in: "INBOX", flags: [.seen], action: .add)
+        try await client.storeFlags(uid: 2, in: "INBOX", flags: ["Custom"], action: .set, silent: true)
+        try await client.storeFlags(uids: [3, 4], in: "INBOX", flags: [.flagged], action: .add)
+        try await client.storeFlags(uids: [5, 6], in: "INBOX", flags: ["Label"], action: .remove)
+
+        try await client.markAsRead(uid: 7, in: "INBOX")
+        try await client.markAsUnread(uid: 8, in: "INBOX")
+        try await client.markForDeletion(uid: 9, in: "INBOX")
+
+        try await client.copyMessage(uid: 10, from: "INBOX", to: "Archive")
+        try await client.copyMessages(uids: [11, 12], from: "INBOX", to: "Archive")
+
+        try await client.moveMessage(uid: 13, from: "INBOX", to: "Archive")
+        try await client.moveMessages(uids: [14, 15], from: "INBOX", to: "Archive")
+
+        try await client.expunge(mailbox: "INBOX")
+        try await client.expunge(uids: [16], in: "INBOX")
+
+        try await client.deleteMessage(uid: 17, in: "INBOX")
+        try await client.deleteMessages(uids: [18, 19], in: "INBOX")
+
+        await client.disconnect()
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("APPEND") })
+        XCTAssertTrue(commands.contains { $0.contains("UID STORE") })
+        XCTAssertTrue(commands.contains { $0.contains("UID COPY") })
+        XCTAssertTrue(commands.contains { $0.contains("UID MOVE") })
+        XCTAssertTrue(commands.contains { $0.contains("UID EXPUNGE") })
+        XCTAssertTrue(commands.contains { $0.contains("EXPUNGE") })
+    }
+
     func testSelectParsesUntaggedStatusCodes() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -802,10 +928,16 @@ class MockIMAPServer {
         // Extract tag and command
         let parts = trimmed.split(separator: " ", maxSplits: 2)
         guard parts.count >= 2 else {
-            return "* BAD Invalid command"
+            return ""
+        }
+
+        let tagCandidate = String(parts[0])
+        let isTagged = tagCandidate.range(of: #"^[A-Za-z0-9]+$"#, options: .regularExpression) != nil
+        guard isTagged else {
+            return ""
         }
         
-        let tag = String(parts[0])
+        let tag = tagCandidate
         let cmd = String(parts[1]).uppercased()
         let remainder = parts.count > 2 ? String(parts[2]) : ""
         let commandAndArgs = String(trimmed.dropFirst(tag.count + 1))
@@ -933,6 +1065,9 @@ class MockIMAPHandler: ChannelInboundHandler {
         }
         
         if let response = server?.handleCommand(rawCommand) {
+            if response.isEmpty {
+                return
+            }
             context.writeAndFlush(wrapOutboundOut(response), promise: nil)
         }
     }

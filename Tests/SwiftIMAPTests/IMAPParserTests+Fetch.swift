@@ -142,4 +142,97 @@ extension IMAPParserTests {
         XCTAssertEqual(envelope.rawSubject, literal)
         XCTAssertEqual(envelope.subject, String(data: literal, encoding: .isoLatin1))
     }
+
+    func testParseFetchHeaderFieldsSection() throws {
+        let input = "* 1 FETCH (BODY[HEADER.FIELDS (Date From)] \"Date: 1\")\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard case .headerFields(let fields, let data) = attributes.first else {
+            return XCTFail("Expected HEADER.FIELDS attribute")
+        }
+
+        XCTAssertEqual(fields, ["Date", "From"])
+        XCTAssertEqual(String(data: data, encoding: .utf8), "Date: 1")
+    }
+
+    func testParseFetchHeaderFieldsNotSection() throws {
+        let input = "* 2 FETCH (BODY[HEADER.FIELDS.NOT (Subject)] \"Hidden\")\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard case .headerFieldsNot(let fields, let data) = attributes.first else {
+            return XCTFail("Expected HEADER.FIELDS.NOT attribute")
+        }
+
+        XCTAssertEqual(fields, ["Subject"])
+        XCTAssertEqual(String(data: data, encoding: .utf8), "Hidden")
+    }
+
+    func testParseFetchRFC822Variants() throws {
+        let input = "* 3 FETCH (RFC822 \"Full\" RFC822.HEADER \"Header\" RFC822.TEXT \"Text\")\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        let bodyValue = attributes.compactMap { attribute -> String? in
+            if case .body(let section, let origin, let data) = attribute,
+               section == nil,
+               origin == nil {
+                return data.flatMap { String(data: $0, encoding: .utf8) }
+            }
+            return nil
+        }.first
+
+        let headerValue = attributes.compactMap { attribute -> String? in
+            if case .header(let data) = attribute {
+                return String(data: data, encoding: .utf8)
+            }
+            return nil
+        }.first
+
+        let textValue = attributes.compactMap { attribute -> String? in
+            if case .text(let data) = attribute {
+                return String(data: data, encoding: .utf8)
+            }
+            return nil
+        }.first
+
+        XCTAssertEqual(bodyValue, "Full")
+        XCTAssertEqual(headerValue, "Header")
+        XCTAssertEqual(textValue, "Text")
+    }
+
+    func testParseFetchBodySectionWithOrigin() throws {
+        let input = "* 4 FETCH (BODY[1.2]<10> \"Part\")\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard case .body(let section, let origin, let data) = attributes.first else {
+            return XCTFail("Expected BODY attribute")
+        }
+
+        XCTAssertEqual(section, "1.2")
+        XCTAssertEqual(origin, 10)
+        XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), "Part")
+    }
 }

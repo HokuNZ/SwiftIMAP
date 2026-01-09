@@ -77,4 +77,52 @@ extension IMAPParserTests {
         XCTAssertEqual(bodyStructure.location, "loc")
         XCTAssertEqual(bodyStructure.extensions ?? [], ["(X Y)"])
     }
+
+    func testParseBodyStructureMessageRfc822() throws {
+        let input = "* 1 FETCH (BODYSTRUCTURE (\"MESSAGE\" \"RFC822\" NIL NIL NIL \"7BIT\" 123 (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<msgid@example.com>\") (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 12 1) 4))\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard let bodyStructure = attributes.compactMap({
+            if case .bodyStructure(let data) = $0 { return data }
+            return nil
+        }).first else {
+            return XCTFail("Expected BODYSTRUCTURE attribute")
+        }
+
+        XCTAssertEqual(bodyStructure.type, "MESSAGE")
+        XCTAssertEqual(bodyStructure.subtype, "RFC822")
+        XCTAssertEqual(bodyStructure.size, 123)
+        XCTAssertEqual(bodyStructure.lines, 4)
+    }
+
+    func testParseBodyStructureSinglePartWithNilOptions() throws {
+        let input = "* 1 FETCH (BODYSTRUCTURE (\"TEXT\" \"PLAIN\" NIL NIL NIL \"7BIT\" 12 1 NIL NIL NIL NIL))\r\n"
+        parser.append(Data(input.utf8))
+
+        let responses = try parser.parseResponses()
+
+        guard case .untagged(.fetch(_, let attributes)) = responses.first else {
+            return XCTFail("Expected FETCH response")
+        }
+
+        guard let bodyStructure = attributes.compactMap({
+            if case .bodyStructure(let data) = $0 { return data }
+            return nil
+        }).first else {
+            return XCTFail("Expected BODYSTRUCTURE attribute")
+        }
+
+        XCTAssertNil(bodyStructure.parameters)
+        XCTAssertNil(bodyStructure.md5)
+        XCTAssertNil(bodyStructure.disposition)
+        XCTAssertNil(bodyStructure.language)
+        XCTAssertNil(bodyStructure.location)
+        XCTAssertNil(bodyStructure.extensions)
+    }
 }
