@@ -127,6 +127,82 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testByeGreetingClosesConnection() async {
+        mockServer.responses["GREETING"] = "* BYE Server shutting down"
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass"),
+            retryConfiguration: RetryConfiguration(maxAttempts: 1)
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        do {
+            try await client.connect()
+            XCTFail("Expected BYE greeting to close connection")
+        } catch {
+            guard case IMAPError.connectionClosed = error else {
+                return XCTFail("Expected connectionClosed error")
+            }
+        }
+
+        await client.disconnect()
+    }
+
+    func testStartTLSUnsupportedCapabilityThrows() async {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .startTLS,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        do {
+            try await client.connect()
+            XCTFail("Expected STARTTLS capability error")
+        } catch {
+            guard case IMAPError.unsupportedCapability(let capability) = error else {
+                return XCTFail("Expected unsupportedCapability error")
+            }
+            XCTAssertEqual(capability, "STARTTLS")
+        }
+
+        await client.disconnect()
+    }
+
+    func testStartTLSWithPreauthIsRejected() async {
+        mockServer.responses["GREETING"] = "* PREAUTH IMAP4rev1"
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 STARTTLS")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .startTLS,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        do {
+            try await client.connect()
+            XCTFail("Expected STARTTLS to fail after PREAUTH")
+        } catch {
+            guard case IMAPError.invalidState(let message) = error else {
+                return XCTFail("Expected invalidState error")
+            }
+            XCTAssertEqual(message, "STARTTLS not permitted after PREAUTH")
+        }
+
+        await client.disconnect()
+    }
+
     func testExternalAuthenticationContinuation() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=EXTERNAL")
         mockServer.setResponse(for: "AUTHENTICATE EXTERNAL", response: "+")

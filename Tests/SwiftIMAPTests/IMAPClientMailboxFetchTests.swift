@@ -179,6 +179,64 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testFetchMessageBodyReturnsNilWhenNoBodyAttribute() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 1 FLAGS (\\Seen))")
+
+        let client = makeClient()
+        try await client.connect()
+
+        let data = try await client.fetchMessageBody(uid: 1, in: "INBOX")
+        XCTAssertNil(data)
+
+        await client.disconnect()
+    }
+
+    func testFetchMessageBodyHandlesPeekAttribute() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 1 BODY.PEEK[] {5}\r\nHello)")
+
+        let client = makeClient()
+        try await client.connect()
+
+        let data = try await client.fetchMessageBody(uid: 1, in: "INBOX", peek: true)
+        XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), "Hello")
+
+        await client.disconnect()
+    }
+
+    func testListMessagesThrowsWhenDisconnected() async {
+        let client = makeClient()
+
+        do {
+            _ = try await client.listMessages(in: "INBOX")
+            XCTFail("Expected listMessages to throw when disconnected")
+        } catch {
+            guard case IMAPError.invalidState(let message) = error else {
+                return XCTFail("Expected invalidState error")
+            }
+            XCTAssertEqual(message, "Not connected")
+        }
+    }
+
+    func testFetchMessageThrowsWhenDisconnected() async {
+        let client = makeClient()
+
+        do {
+            _ = try await client.fetchMessage(uid: 1, in: "INBOX")
+            XCTFail("Expected fetchMessage to throw when disconnected")
+        } catch {
+            guard case IMAPError.invalidState(let message) = error else {
+                return XCTFail("Expected invalidState error")
+            }
+            XCTAssertEqual(message, "Not connected")
+        }
+    }
+
     private func makeClient() -> IMAPClient {
         IMAPClient(
             configuration: IMAPConfiguration(
