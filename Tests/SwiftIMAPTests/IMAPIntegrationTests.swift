@@ -537,6 +537,58 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testMoveMessagesUsesUidMoveWhenSupported() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 MOVE")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID MOVE", response: "OK UID MOVE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        try await client.moveMessages(uids: [1, 2, 3], from: "INBOX", to: "Archive")
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID MOVE") })
+        XCTAssertFalse(commands.contains { $0.contains("UID COPY") })
+
+        await client.disconnect()
+    }
+
+    func testMoveMessagesFallsBackWithoutMoveCapability() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID COPY", response: "OK UID COPY completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK UID STORE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        try await client.moveMessages(uids: [1, 2], from: "INBOX", to: "Archive")
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID COPY") })
+        XCTAssertEqual(commands.filter { $0.contains("UID STORE") }.count, 2)
+        XCTAssertFalse(commands.contains { $0.contains("UID MOVE") })
+
+        await client.disconnect()
+    }
+
     func testSelectParsesUntaggedStatusCodes() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")

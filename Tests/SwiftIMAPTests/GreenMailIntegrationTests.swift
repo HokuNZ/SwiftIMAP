@@ -182,6 +182,31 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertTrue(unkeywordMatches.contains { $0.uid == uid })
     }
 
+    func testDeleteMessagesConvenience() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Delete")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let subject = "GreenMail Delete \(UUID().uuidString.prefix(8))"
+        let messageA = makeMessage(subject: subject, body: "DeleteBodyA")
+        let messageB = makeMessage(subject: subject, body: "DeleteBodyB")
+
+        try await client.appendMessage(messageA, to: mailbox)
+        try await client.appendMessage(messageB, to: mailbox)
+
+        let matches = try await client.searchMessagesBySubject(subject, in: mailbox)
+        XCTAssertEqual(matches.count, 2)
+
+        let uids = matches.map(\.uid)
+        try await client.deleteMessages(uids: uids, in: mailbox)
+
+        let remaining = try await client.searchMessagesBySubject(subject, in: mailbox)
+        XCTAssertTrue(remaining.isEmpty)
+    }
+
     func testCopyAndRenameMailbox() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
@@ -258,6 +283,77 @@ final class GreenMailIntegrationTests: XCTestCase {
         let sinceMatches = try await client.searchMessages(in: mailbox, criteria: .since(cutoffDate))
         XCTAssertTrue(sinceMatches.contains { $0.envelope?.subject == newSubject })
         XCTAssertFalse(sinceMatches.contains { $0.envelope?.subject == oldSubject })
+    }
+
+    func testSearchHelpersComplexAndLimit() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Helpers")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let now = Date()
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+
+        let fromA = "helper-a@example.com"
+        let fromB = "helper-b@example.com"
+        let subjectA = "GreenMail Helper A \(UUID().uuidString.prefix(8))"
+        let subjectB = "GreenMail Helper B \(UUID().uuidString.prefix(8))"
+        let bodyA = "HelperBodyA-\(UUID().uuidString.prefix(8))"
+        let bodyB = "HelperBodyB-\(UUID().uuidString.prefix(8))"
+
+        let messageA = makeMessage(subject: subjectA, body: bodyA, date: now, from: fromA, to: "to@example.com")
+        let messageB = makeMessage(subject: subjectB, body: bodyB, date: now, from: fromB, to: "to@example.com")
+
+        guard let messageAString = String(data: messageA, encoding: .utf8) else {
+            XCTFail("Expected UTF-8 string for message")
+            return
+        }
+        try await client.appendMessage(messageAString, to: mailbox, date: now)
+        try await client.appendMessage(messageB, to: mailbox, date: now)
+
+        let fromMatches = try await client.searchMessagesFrom(fromA, in: mailbox)
+        XCTAssertTrue(fromMatches.contains { $0.envelope?.subject == subjectA })
+
+        let textMatches = try await client.searchMessagesByText(bodyB, in: mailbox)
+        XCTAssertTrue(textMatches.contains { $0.envelope?.subject == subjectB })
+
+        let sinceMatches = try await client.searchMessagesSince(yesterday, in: mailbox)
+        XCTAssertGreaterThanOrEqual(sinceMatches.count, 2)
+
+        let singleCriteria = try await client.searchMessages(in: mailbox, matching: [.from(fromA)])
+        XCTAssertTrue(singleCriteria.contains { $0.envelope?.subject == subjectA })
+
+        let andMatches = try await client.searchMessages(in: mailbox, matching: [.from(fromA), .subject(subjectA)])
+        XCTAssertEqual(andMatches.count, 1)
+
+        guard let uidA = andMatches.first?.uid else {
+            XCTFail("Expected UID for helper message A")
+            return
+        }
+        let uidB = (try await client.searchMessagesBySubject(subjectB, in: mailbox)).first?.uid
+        guard let uidB else {
+            XCTFail("Expected UID for helper message B")
+            return
+        }
+
+        try await client.storeFlags(uid: uidA, in: mailbox, flags: [.seen], action: .add)
+        try await client.storeFlags(uid: uidB, in: mailbox, flags: [.seen, .flagged], action: .add)
+
+        let complexFiltered = try await client.searchMessagesComplex(
+            in: mailbox,
+            flags: [.seen],
+            excludeFlags: [.flagged]
+        )
+        XCTAssertTrue(complexFiltered.contains { $0.uid == uidA })
+        XCTAssertFalse(complexFiltered.contains { $0.uid == uidB })
+
+        let complexAll = try await client.searchMessagesComplex(in: mailbox)
+        XCTAssertGreaterThanOrEqual(complexAll.count, 2)
+
+        let limited = try await client.searchMessages(in: mailbox, criteria: .all, limit: 1)
+        XCTAssertEqual(limited.count, 1)
     }
 
     func testSearchByCcBccHeaderWithCharset() async throws {
