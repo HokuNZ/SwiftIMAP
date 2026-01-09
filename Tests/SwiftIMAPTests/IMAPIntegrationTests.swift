@@ -24,9 +24,6 @@ final class IMAPIntegrationTests: XCTestCase {
     
     override func setUp() async throws {
         try await super.setUp()
-        if ProcessInfo.processInfo.environment["CI"] != nil {
-            throw XCTSkip("Integration tests are disabled in CI")
-        }
         eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         mockServer = MockIMAPServer(eventLoopGroup: eventLoopGroup)
         serverPort = try await mockServer.start()
@@ -389,6 +386,157 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testMailboxStatusParsesResponse() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "STATUS", response: """
+            * STATUS "INBOX" (MESSAGES 4 RECENT 1 UIDNEXT 7 UIDVALIDITY 42 UNSEEN 2)
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        let status = try await client.mailboxStatus("INBOX")
+        XCTAssertEqual(status.messages, 4)
+        XCTAssertEqual(status.recent, 1)
+        XCTAssertEqual(status.uidNext, 7)
+        XCTAssertEqual(status.uidValidity, 42)
+        XCTAssertEqual(status.unseen, 2)
+        await client.disconnect()
+    }
+
+    func testFetchMessageBySequenceReturnsSummary() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "* 1 EXISTS")
+        mockServer.setResponse(for: "FETCH", response: """
+            * 2 FETCH (UID 99 FLAGS (\\Seen) INTERNALDATE "01-Jan-2024 12:00:00 +0000" RFC822.SIZE 1234 ENVELOPE ("Mon, 1 Jan 2024 12:00:00 +0000" "Seq Subject" (("Sender" NIL "sender" "example.com")) NIL NIL (("Recipient" NIL "recipient" "example.com")) NIL NIL NIL "<seq-id@example.com>"))
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        let summary = try await client.fetchMessageBySequence(sequenceNumber: 2, in: "INBOX")
+        XCTAssertEqual(summary?.uid, 99)
+        XCTAssertEqual(summary?.sequenceNumber, 2)
+        XCTAssertEqual(summary?.envelope?.subject, "Seq Subject")
+        await client.disconnect()
+    }
+
+    func testFetchMessageBodyReturnsLiteral() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID FETCH", response: """
+            * 1 FETCH (UID 1 BODY[] {11}
+            Hello World)
+            """)
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        let data = try await client.fetchMessageBody(uid: 1, in: "INBOX")
+        XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), "Hello World")
+        await client.disconnect()
+    }
+
+    func testMoveMessageFallsBackWithoutMoveCapability() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID COPY", response: "OK UID COPY completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK UID STORE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        try await client.moveMessage(uid: 7, from: "INBOX", to: "Archive")
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID COPY") })
+        XCTAssertTrue(commands.contains { $0.contains("UID STORE") })
+        XCTAssertFalse(commands.contains { $0.contains("UID MOVE") })
+
+        await client.disconnect()
+    }
+
+    func testExpungeUsesUidPlusWhenSupported() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 UIDPLUS LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK UID EXPUNGE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        try await client.expunge(uids: [1, 2], in: "INBOX")
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID EXPUNGE") })
+
+        await client.disconnect()
+    }
+
+    func testExpungeFallsBackWithoutUidPlus() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "EXPUNGE", response: "OK EXPUNGE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        try await client.expunge(uids: [3], in: "INBOX")
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("EXPUNGE") && !$0.contains("UID EXPUNGE") })
+        XCTAssertFalse(commands.contains { $0.contains("UID EXPUNGE") })
+
+        await client.disconnect()
+    }
+
     func testSelectParsesUntaggedStatusCodes() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -449,6 +597,26 @@ final class IMAPIntegrationTests: XCTestCase {
             Set(["\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft", "\\*"])
         )
 
+        await client.disconnect()
+    }
+
+    func testExamineParsesReadOnlyAccess() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "EXAMINE \"INBOX\"", response: "OK [READ-ONLY] EXAMINE completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+
+        let client = IMAPClient(configuration: config)
+
+        try await client.connect()
+        let status = try await client.examineMailbox("INBOX")
+        XCTAssertEqual(status.access, .readOnly)
         await client.disconnect()
     }
 

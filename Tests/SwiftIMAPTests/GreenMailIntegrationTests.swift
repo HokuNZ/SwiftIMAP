@@ -122,6 +122,33 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertFalse(unreadAfter.contains { $0.uid == summary.uid })
     }
 
+    func testMailboxStatusAndFetchBySequence() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = makeMailboxName(prefix: "Status")
+        try await client.createMailbox(mailbox)
+        defer { Task { try? await client.deleteMailbox(mailbox) } }
+
+        let subject = "GreenMail Status \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(subject: subject, body: "StatusBody")
+        try await client.appendMessage(message, to: mailbox)
+
+        let status = try await client.mailboxStatus(mailbox)
+        XCTAssertGreaterThanOrEqual(status.messages, 1)
+        XCTAssertGreaterThan(status.uidNext, 0)
+        XCTAssertGreaterThan(status.uidValidity, 0)
+
+        let sequenceNumbers = try await client.listMessages(in: mailbox)
+        guard let sequenceNumber = sequenceNumbers.first else {
+            XCTFail("Expected message sequence number")
+            return
+        }
+
+        let summary = try await client.fetchMessageBySequence(sequenceNumber: sequenceNumber, in: mailbox)
+        XCTAssertEqual(summary?.envelope?.subject, subject)
+    }
+
     func testKeywordLabelSearchAndClear() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }

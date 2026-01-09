@@ -159,7 +159,7 @@ Reference:
 - [x] Encoder unit tests (`Tests/SwiftIMAPTests/IMAPEncoderTests.swift`).
 - [x] Parser unit tests (`Tests/SwiftIMAPTests/IMAPParserTests*.swift`).
 - [x] Literal parsing tests (`Tests/SwiftIMAPTests/IMAPLiteralParsingTests.swift`).
-- [ ] (partial) Integration tests require mock server (skipped in CI) and GreenMail tests are opt-in.
+- [x] Integration tests run in CI (mock server on macOS; GreenMail job on Linux).
 
 ## 10. Non-RFC3501 Extensions (Tracked Separately)
 - [x] IDLE (RFC 2177) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
