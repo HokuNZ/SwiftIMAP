@@ -12,6 +12,8 @@ extension IMAPClient {
     ///   - searchCriteria: The search criteria (defaults to `.all`)
     ///   - charset: Optional charset for the search (e.g., "UTF-8")
     /// - Returns: An array of UIDs matching the criteria
+    /// - Throws: `IMAPError` if the connection fails, authentication is required,
+    ///           or the mailbox cannot be selected.
     public func listMessageUIDs(
         in mailbox: String,
         searchCriteria: IMAPCommand.SearchCriteria = .all,

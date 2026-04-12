@@ -126,11 +126,18 @@ extension Interactive {
         print(String(repeating: "=", count: 100))
 
         var messages: [(uid: UInt32, summary: MessageSummary)] = []
+        var failedCount = 0
 
         for uid in uidsToShow {
             if let summary = try await client.fetchMessage(uid: uid, in: mailbox) {
                 messages.append((uid, summary))
+            } else {
+                failedCount += 1
             }
+        }
+
+        if failedCount > 0 {
+            print("\nNote: \(failedCount) message(s) could not be fetched (may have been deleted)")
         }
 
         for (uid, summary) in messages.reversed() {
