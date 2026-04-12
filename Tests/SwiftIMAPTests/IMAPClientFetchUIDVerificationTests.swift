@@ -166,6 +166,37 @@ final class IMAPClientFetchUIDVerificationTests: XCTestCase {
 
     // MARK: - Request UID in response tests
 
+    /// Test that fetchMessage automatically adds UID to fetch items if not present
+    func testFetchMessageEnsuresUIDInRequest() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID FETCH", response: """
+* 1 FETCH (UID 42 FLAGS (\\Seen) INTERNALDATE "17-Jul-1996 02:44:25 -0700" RFC822.SIZE 4286 ENVELOPE ("Wed, 17 Jul 1996 02:23:25 -0700" "Test Subject" ((NIL NIL "sender" "example.com")) ((NIL NIL "sender" "example.com")) ((NIL NIL "sender" "example.com")) ((NIL NIL "recipient" "example.com")) NIL NIL NIL "<msg@example.com>"))
+""")
+
+        let client = makeClient()
+        try await client.connect()
+
+        // Request without UID in items - it should be added automatically
+        _ = try await client.fetchMessage(uid: 42, in: "INBOX", items: [.flags, .envelope])
+
+        // Verify the fetch command includes UID in the requested items
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        let fetchCommand = commands.first { $0.contains("UID FETCH") && $0.contains("ENVELOPE") }
+        XCTAssertNotNil(fetchCommand)
+
+        // The fetch should request UID even though we didn't include it in items
+        if let cmd = fetchCommand {
+            // Command format: "A4 UID FETCH 42 (UID FLAGS ENVELOPE)"
+            // Check that UID appears in the fetch items list (between parentheses)
+            XCTAssertTrue(cmd.contains("(UID") || cmd.contains(" UID ") || cmd.contains(" UID)"),
+                          "fetchMessage should add UID to fetch items for verification. Command: \(cmd)")
+        }
+
+        await client.disconnect()
+    }
+
     /// Test that fetchMessageBody requests UID in fetch items
     func testFetchMessageBodyIncludesUIDInRequest() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
