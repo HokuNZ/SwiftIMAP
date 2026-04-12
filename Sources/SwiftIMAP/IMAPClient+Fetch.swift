@@ -81,6 +81,14 @@ extension IMAPClient {
         )
     }
 
+    /// Fetches a message by its UID.
+    ///
+    /// - Parameters:
+    ///   - uid: The UID of the message to fetch
+    ///   - mailbox: The mailbox containing the message
+    ///   - items: The fetch items to request (defaults to common envelope data)
+    /// - Returns: The message summary if found, nil otherwise
+    /// - Throws: `IMAPError` if the connection fails or the mailbox cannot be selected.
     public func fetchMessage(
         uid: UID,
         in mailbox: String,
@@ -97,13 +105,35 @@ extension IMAPClient {
             work: {
                 _ = try await self.selectMailbox(mailbox)
 
+                // Ensure UID is included in fetch items for verification
+                let hasUID = items.contains { item in
+                    if case .uid = item { return true }
+                    return false
+                }
+                var fetchItems = items
+                if !hasUID {
+                    fetchItems.insert(.uid, at: 0)
+                }
+
                 let responses = try await self.connection.sendCommand(
-                    .uid(.fetch(sequence: .single(uid), items: items))
+                    .uid(.fetch(sequence: .single(uid), items: fetchItems))
                 )
 
                 for response in responses {
                     if case .untagged(.fetch(let seqNum, let attributes)) = response {
-                        return try self.parseMessageSummary(sequenceNumber: seqNum, attributes: attributes)
+                        // Verify the UID in the response matches the requested UID
+                        // to avoid returning wrong data when multiple fetches are pending
+                        let responseUID = attributes.compactMap { attribute -> UID? in
+                            if case .uid(let fetchedUID) = attribute {
+                                return fetchedUID
+                            }
+                            return nil
+                        }.first
+
+                        if responseUID == uid {
+                            return try self.parseMessageSummary(sequenceNumber: seqNum, attributes: attributes)
+                        }
+                        // UID doesn't match - skip this response
                     }
                 }
 
@@ -112,6 +142,14 @@ extension IMAPClient {
         )
     }
 
+    /// Fetches the body of a message by its UID.
+    ///
+    /// - Parameters:
+    ///   - uid: The UID of the message to fetch
+    ///   - mailbox: The mailbox containing the message
+    ///   - peek: If true, fetching won't mark the message as read (default: true)
+    /// - Returns: The message body data if found, nil otherwise
+    /// - Throws: `IMAPError` if the connection fails or the mailbox cannot be selected.
     public func fetchMessageBody(
         uid: UID,
         in mailbox: String,
@@ -119,23 +157,37 @@ extension IMAPClient {
     ) async throws -> Data? {
         _ = try await selectMailbox(mailbox)
 
+        // Request UID along with body for verification
         let responses = try await connection.sendCommand(
             .uid(.fetch(
                 sequence: .single(uid),
-                items: [.bodySection(section: nil, peek: peek)]
+                items: [.uid, .bodySection(section: nil, peek: peek)]
             ))
         )
 
         for response in responses {
             if case .untagged(.fetch(_, let attributes)) = response {
+                // Extract UID from response for verification
+                var responseUID: UID?
+                var bodyData: Data?
+
                 for attribute in attributes {
                     switch attribute {
+                    case .uid(let fetchedUID):
+                        responseUID = fetchedUID
                     case .body(_, _, let data), .bodyPeek(_, _, let data):
-                        return data
+                        bodyData = data
                     default:
                         continue
                     }
                 }
+
+                // Only return body if UID matches the requested UID
+                // This prevents returning wrong data when multiple fetches are pending
+                if responseUID == uid, let data = bodyData {
+                    return data
+                }
+                // UID doesn't match - skip this response
             }
         }
 
