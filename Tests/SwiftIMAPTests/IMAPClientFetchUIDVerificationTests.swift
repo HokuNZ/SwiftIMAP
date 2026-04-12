@@ -214,9 +214,11 @@ final class IMAPClientFetchUIDVerificationTests: XCTestCase {
         let fetchCommand = commands.first { $0.contains("UID FETCH") && $0.contains("BODY") }
         XCTAssertNotNil(fetchCommand)
 
-        // The fetch should request both UID and BODY
+        // The fetch should request UID in the items list (not just as command prefix)
+        // Command format: "A4 UID FETCH 42 (UID BODY[])"
         if let cmd = fetchCommand {
-            XCTAssertTrue(cmd.contains("UID") && cmd.contains("BODY"),
+            // Check that UID appears in the fetch items list (between parentheses)
+            XCTAssertTrue(cmd.contains("(UID") || cmd.contains(" UID ") || cmd.contains(" UID)"),
                           "fetchMessageBody should request UID in fetch items for verification. Command: \(cmd)")
         }
 
