@@ -1,6 +1,20 @@
 import XCTest
 @testable import SwiftIMAP
 
+/// Thread-safe counter for use in async test closures
+private actor Counter {
+    private var value: Int = 0
+
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+
+    func get() -> Int {
+        value
+    }
+}
+
 final class RetryHandlerTests: XCTestCase {
     private func makeHandler(
         maxAttempts: Int = 3,
@@ -19,84 +33,89 @@ final class RetryHandlerTests: XCTestCase {
 
     func testExecuteReturnsOnFirstAttempt() async throws {
         let handler = makeHandler()
-        var attempts = 0
+        let attempts = Counter()
 
         let result: String = try await handler.execute(operation: "success") {
-            attempts += 1
+            _ = await attempts.increment()
             return "ok"
         }
 
         XCTAssertEqual(result, "ok")
-        XCTAssertEqual(attempts, 1)
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 1)
     }
 
     func testExecuteRetriesOnTimeout() async throws {
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.timeout])
-        var attempts = 0
+        let attempts = Counter()
 
         let result: String = try await handler.execute(operation: "timeout") {
-            attempts += 1
-            if attempts == 1 {
+            let count = await attempts.increment()
+            if count == 1 {
                 throw IMAPError.timeout
             }
             return "ok"
         }
 
         XCTAssertEqual(result, "ok")
-        XCTAssertEqual(attempts, 2)
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 2)
     }
 
     func testExecuteRetriesOnTemporaryServerError() async throws {
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.temporaryFailure])
-        var attempts = 0
+        let attempts = Counter()
 
         let result: String = try await handler.execute(operation: "server-temp") {
-            attempts += 1
-            if attempts == 1 {
+            let count = await attempts.increment()
+            if count == 1 {
                 throw IMAPError.serverError("Temporary unavailable")
             }
             return "ok"
         }
 
         XCTAssertEqual(result, "ok")
-        XCTAssertEqual(attempts, 2)
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 2)
     }
 
     func testExecuteRetriesOnNetworkError() async throws {
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.networkError])
-        var attempts = 0
+        let attempts = Counter()
 
         let result: String = try await handler.execute(operation: "network") {
-            attempts += 1
-            if attempts == 1 {
+            let count = await attempts.increment()
+            if count == 1 {
                 throw NSError(domain: "Test", code: 1, userInfo: [NSLocalizedDescriptionKey: "network unreachable"])
             }
             return "ok"
         }
 
         XCTAssertEqual(result, "ok")
-        XCTAssertEqual(attempts, 2)
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 2)
     }
 
     func testExecuteThrowsNonRetryableError() async {
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.timeout])
-        var attempts = 0
+        let attempts = Counter()
 
         do {
             _ = try await handler.execute(operation: "invalid") {
-                attempts += 1
+                _ = await attempts.increment()
                 throw IMAPError.invalidState("not retryable")
             }
             XCTFail("Expected non-retryable error")
         } catch {
-            XCTAssertEqual(attempts, 1)
+            let attemptCount = await attempts.get()
+            XCTAssertEqual(attemptCount, 1)
         }
     }
 
     func testExecuteWithReconnectRecoversAfterReconnect() async throws {
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.connectionLost])
-        var attempts = 0
-        var reconnects = 0
+        let attempts = Counter()
+        let reconnects = Counter()
 
         let result: String = try await handler.executeWithReconnect(
             operation: "reconnect",
@@ -105,11 +124,11 @@ final class RetryHandlerTests: XCTestCase {
                 return false
             },
             reconnect: {
-                reconnects += 1
+                _ = await reconnects.increment()
             },
             work: {
-                attempts += 1
-                if attempts == 1 {
+                let count = await attempts.increment()
+                if count == 1 {
                     throw IMAPError.connectionClosed
                 }
                 return "ok"
@@ -117,21 +136,23 @@ final class RetryHandlerTests: XCTestCase {
         )
 
         XCTAssertEqual(result, "ok")
-        XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(reconnects, 1)
+        let attemptCount = await attempts.get()
+        let reconnectCount = await reconnects.get()
+        XCTAssertEqual(attemptCount, 2)
+        XCTAssertEqual(reconnectCount, 1)
     }
 
     func testExecuteWithReconnectRetriesOnTimeout() async throws {
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.timeout])
-        var attempts = 0
+        let attempts = Counter()
 
         let result: String = try await handler.executeWithReconnect(
             operation: "timeout-retry",
             needsReconnect: { _ in false },
             reconnect: {},
             work: {
-                attempts += 1
-                if attempts == 1 {
+                let count = await attempts.increment()
+                if count == 1 {
                     throw IMAPError.timeout
                 }
                 return "ok"
@@ -139,7 +160,8 @@ final class RetryHandlerTests: XCTestCase {
         )
 
         XCTAssertEqual(result, "ok")
-        XCTAssertEqual(attempts, 2)
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 2)
     }
 
     func testErrorDescriptionsCoverAllCases() {
