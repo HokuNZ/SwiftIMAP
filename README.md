@@ -25,7 +25,7 @@ Add SwiftIMAP to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "0.1.0")
+    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "1.0.0")
 ]
 ```
 
@@ -247,6 +247,10 @@ SwiftIMAP is built with a layered architecture:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Used By
+
+<a href="https://triage.cc"><img src="docs/images/triage.png" alt="Triage"></a>
 
 ## Disclosure
 

@@ -104,3 +104,28 @@ The project follows a three-layer architecture:
 2. **Response parsing**: Some servers send non-standard responses - parser attempts to be lenient
 3. **TLS issues**: Some servers require specific TLS versions or cipher suites
 4. **Authentication**: Different servers support different auth mechanisms - check CAPABILITY response
+
+## Release Management
+
+### Versioning
+This project uses [Semantic Versioning](https://semver.org/). Version tags follow the format `vMAJOR.MINOR.PATCH`.
+
+### Maintaining CHANGELOG.md
+- **Every merge to `main` must include a CHANGELOG.md update**
+- Add entries under `[Unreleased]` section
+- Use categories: Added, Changed, Deprecated, Removed, Fixed, Security
+- Link to relevant PRs/issues
+- When releasing, move Unreleased items to a new version section with date
+
+### GitHub Milestones
+- Create milestones for upcoming releases (e.g., `v1.1`)
+- Assign all related PRs and issues to the appropriate milestone
+- Close milestones when the version is released
+
+### Releasing a Version
+1. Update CHANGELOG.md: move Unreleased to new version section
+2. Update version in README.md package reference
+3. Commit changes
+4. Create annotated tag: `git tag -a v1.x.x -m "Release v1.x.x"`
+5. Push tag: `git push origin v1.x.x`
+6. Create GitHub Release with notes from CHANGELOG
