@@ -555,6 +555,87 @@ final class GreenMailIntegrationTests: XCTestCase {
         let remaining = try await client.searchMessagesBySubject(subject, in: moveMailbox)
         XCTAssertEqual(remaining.count, 1)
     }
+
+    // MARK: - UID Search Tests (Issue #1)
+
+    /// Test that listMessageUIDs returns stable UIDs that can be used for subsequent operations
+    func testListMessageUIDsReturnsStableUIDs() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = "INBOX"
+        let subject = "UID-Test-\(UUID().uuidString)"
+
+        // Append a test message
+        let message = """
+        From: sender@example.com\r
+        To: test@example.com\r
+        Subject: \(subject)\r
+        \r
+        Test body for UID stability test.
+        """
+        try await client.appendMessage(Data(message.utf8), to: mailbox)
+
+        // Get UIDs using the new listMessageUIDs method
+        let uids = try await client.listMessageUIDs(in: mailbox, searchCriteria: .subject(subject))
+        XCTAssertEqual(uids.count, 1, "Should find exactly one message")
+
+        guard let uid = uids.first else {
+            XCTFail("No UID returned")
+            return
+        }
+
+        // Verify the UID is stable - fetching by UID should return the same message
+        let fetchedMessage = try await client.fetchMessage(uid: uid, in: mailbox)
+        XCTAssertNotNil(fetchedMessage, "Should be able to fetch message by UID")
+        XCTAssertEqual(fetchedMessage?.uid, uid, "Fetched message UID should match")
+        XCTAssertEqual(fetchedMessage?.envelope?.subject, subject, "Subject should match")
+
+        // Clean up
+        try await client.storeFlags(uids: [uid], in: mailbox, flags: [.deleted], action: .add)
+        try await client.expunge(uids: [uid], in: mailbox)
+    }
+
+    /// Test that searchMessages handles deleted messages gracefully (race condition scenario)
+    func testSearchMessagesHandlesDeletedMessages() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = "INBOX"
+        let subject = "Race-Test-\(UUID().uuidString)"
+
+        // Append two test messages
+        for i in 1...2 {
+            let message = """
+            From: sender@example.com\r
+            To: test@example.com\r
+            Subject: \(subject)\r
+            \r
+            Test body \(i).
+            """
+            try await client.appendMessage(Data(message.utf8), to: mailbox)
+        }
+
+        // Get UIDs first
+        let uids = try await client.listMessageUIDs(in: mailbox, searchCriteria: .subject(subject))
+        XCTAssertEqual(uids.count, 2, "Should find two messages")
+
+        // Delete one message before searching (simulating race condition)
+        if let firstUID = uids.first {
+            try await client.storeFlags(uids: [firstUID], in: mailbox, flags: [.deleted], action: .add)
+            try await client.expunge(uids: [firstUID], in: mailbox)
+        }
+
+        // searchMessages should still work and return the remaining message
+        let results = try await client.searchMessages(in: mailbox, criteria: .subject(subject))
+        XCTAssertEqual(results.count, 1, "Should find one remaining message after deletion")
+
+        // Clean up remaining message
+        if let remainingUID = results.first?.uid {
+            try await client.storeFlags(uids: [remainingUID], in: mailbox, flags: [.deleted], action: .add)
+            try await client.expunge(uids: [remainingUID], in: mailbox)
+        }
+    }
 }
 
 private extension GreenMailIntegrationTests {
