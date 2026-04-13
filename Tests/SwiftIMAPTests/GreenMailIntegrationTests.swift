@@ -605,13 +605,13 @@ final class GreenMailIntegrationTests: XCTestCase {
         let subject = "Race-Test-\(UUID().uuidString)"
 
         // Append two test messages
-        for i in 1...2 {
+        for index in 1...2 {
             let message = """
             From: sender@example.com\r
             To: test@example.com\r
             Subject: \(subject)\r
             \r
-            Test body \(i).
+            Test body \(index).
             """
             try await client.appendMessage(Data(message.utf8), to: mailbox)
         }
