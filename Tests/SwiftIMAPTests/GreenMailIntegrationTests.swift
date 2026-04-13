@@ -636,6 +636,122 @@ final class GreenMailIntegrationTests: XCTestCase {
             try await client.expunge(uids: [remainingUID], in: mailbox)
         }
     }
+
+    // MARK: - Fetch UID Verification Tests (Issue #2)
+
+    /// Test that fetchMessage returns the correct message when multiple messages exist
+    func testFetchMessageReturnsCorrectMessageByUID() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = "INBOX"
+        let subject1 = "Fetch-UID-Test-1-\(UUID().uuidString)"
+        let subject2 = "Fetch-UID-Test-2-\(UUID().uuidString)"
+
+        // Append two test messages with different subjects
+        let message1 = """
+        From: sender@example.com\r
+        To: test@example.com\r
+        Subject: \(subject1)\r
+        \r
+        Body of message 1.
+        """
+        let message2 = """
+        From: sender@example.com\r
+        To: test@example.com\r
+        Subject: \(subject2)\r
+        \r
+        Body of message 2.
+        """
+        try await client.appendMessage(Data(message1.utf8), to: mailbox)
+        try await client.appendMessage(Data(message2.utf8), to: mailbox)
+
+        // Get UIDs for both messages
+        let uids1 = try await client.searchMessagesBySubject(subject1, in: mailbox)
+        let uids2 = try await client.searchMessagesBySubject(subject2, in: mailbox)
+
+        guard let uid1 = uids1.first?.uid, let uid2 = uids2.first?.uid else {
+            XCTFail("Could not find test messages")
+            return
+        }
+
+        // Fetch each message by UID and verify we get the correct one
+        let fetched1 = try await client.fetchMessage(uid: uid1, in: mailbox)
+        let fetched2 = try await client.fetchMessage(uid: uid2, in: mailbox)
+
+        XCTAssertNotNil(fetched1, "Should fetch message 1")
+        XCTAssertNotNil(fetched2, "Should fetch message 2")
+        XCTAssertEqual(fetched1?.uid, uid1, "Fetched message 1 should have correct UID")
+        XCTAssertEqual(fetched2?.uid, uid2, "Fetched message 2 should have correct UID")
+        XCTAssertEqual(fetched1?.envelope?.subject, subject1, "Fetched message 1 should have correct subject")
+        XCTAssertEqual(fetched2?.envelope?.subject, subject2, "Fetched message 2 should have correct subject")
+
+        // Clean up
+        try await client.storeFlags(uids: [uid1, uid2], in: mailbox, flags: [.deleted], action: .add)
+        try await client.expunge(uids: [uid1, uid2], in: mailbox)
+    }
+
+    /// Test that fetchMessageBody returns the correct body when multiple messages exist
+    func testFetchMessageBodyReturnsCorrectBodyByUID() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        let mailbox = "INBOX"
+        let subject1 = "Body-UID-Test-1-\(UUID().uuidString)"
+        let subject2 = "Body-UID-Test-2-\(UUID().uuidString)"
+        let body1 = "Unique body content for message ONE - \(UUID().uuidString)"
+        let body2 = "Unique body content for message TWO - \(UUID().uuidString)"
+
+        // Append two test messages with different bodies
+        let message1 = """
+        From: sender@example.com\r
+        To: test@example.com\r
+        Subject: \(subject1)\r
+        \r
+        \(body1)
+        """
+        let message2 = """
+        From: sender@example.com\r
+        To: test@example.com\r
+        Subject: \(subject2)\r
+        \r
+        \(body2)
+        """
+        try await client.appendMessage(Data(message1.utf8), to: mailbox)
+        try await client.appendMessage(Data(message2.utf8), to: mailbox)
+
+        // Get UIDs for both messages
+        let uids1 = try await client.searchMessagesBySubject(subject1, in: mailbox)
+        let uids2 = try await client.searchMessagesBySubject(subject2, in: mailbox)
+
+        guard let uid1 = uids1.first?.uid, let uid2 = uids2.first?.uid else {
+            XCTFail("Could not find test messages")
+            return
+        }
+
+        // Fetch each body by UID and verify we get the correct one
+        let fetchedBody1 = try await client.fetchMessageBody(uid: uid1, in: mailbox)
+        let fetchedBody2 = try await client.fetchMessageBody(uid: uid2, in: mailbox)
+
+        XCTAssertNotNil(fetchedBody1, "Should fetch body 1")
+        XCTAssertNotNil(fetchedBody2, "Should fetch body 2")
+
+        if let data1 = fetchedBody1, let bodyString1 = String(data: data1, encoding: .utf8) {
+            XCTAssertTrue(bodyString1.contains(body1), "Fetched body 1 should contain correct content")
+        } else {
+            XCTFail("Could not decode body 1")
+        }
+
+        if let data2 = fetchedBody2, let bodyString2 = String(data: data2, encoding: .utf8) {
+            XCTAssertTrue(bodyString2.contains(body2), "Fetched body 2 should contain correct content")
+        } else {
+            XCTFail("Could not decode body 2")
+        }
+
+        // Clean up
+        try await client.storeFlags(uids: [uid1, uid2], in: mailbox, flags: [.deleted], action: .add)
+        try await client.expunge(uids: [uid1, uid2], in: mailbox)
+    }
 }
 
 private extension GreenMailIntegrationTests {
