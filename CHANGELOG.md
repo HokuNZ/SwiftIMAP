@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `fetchMessage()` and `fetchMessageBody()` now verify UID in response to prevent returning wrong data (#2)
+- `MimePart.isAttachment` now correctly identifies inline parts with filenames as attachments (#5)
+  - Apple Mail marks PDF attachments as `Content-Disposition: inline` with a filename
+  - Previously these were incorrectly excluded from the `attachments` array
+  - Embedded images with Content-ID (cid: references) are still excluded, even with filenames
 
 ### Deprecated
 - `listMessages()` - use `listMessageUIDs()` instead (sequence numbers are unstable)
