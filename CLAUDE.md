@@ -107,14 +107,25 @@ The project follows a three-layer architecture:
 
 ## Release Management
 
-### Versioning
+### Versioning Strategy
 This project uses [Semantic Versioning](https://semver.org/). Version tags follow the format `vMAJOR.MINOR.PATCH`.
+
+**How consumers reference versions:**
+```swift
+// Package.swift - consumers use version ranges
+.package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "1.0.0")
+```
+
+**Branch and tag strategy:**
+- Tags (e.g., `v1.0`, `v1.1`) are immutable release points
+- `main` branch contains development work for the next release
+- Existing apps continue building against tagged versions while new work happens on main
 
 ### Maintaining CHANGELOG.md
 - **Every merge to `main` must include a CHANGELOG.md update**
 - Add entries under `[Unreleased]` section
 - Use categories: Added, Changed, Deprecated, Removed, Fixed, Security
-- Link to relevant PRs/issues
+- Link to relevant PRs/issues using `(#N)` format
 - When releasing, move Unreleased items to a new version section with date
 
 ### GitHub Milestones
@@ -123,9 +134,35 @@ This project uses [Semantic Versioning](https://semver.org/). Version tags follo
 - Close milestones when the version is released
 
 ### Releasing a Version
-1. Update CHANGELOG.md: move Unreleased to new version section
-2. Update version in README.md package reference
-3. Commit changes
-4. Create annotated tag: `git tag -a v1.x.x -m "Release v1.x.x"`
-5. Push tag: `git push origin v1.x.x`
-6. Create GitHub Release with notes from CHANGELOG
+
+**Pre-release checklist:**
+- [ ] All PRs for the milestone are merged
+- [ ] All tests pass: `swift test`
+- [ ] CHANGELOG.md has entries for all changes
+
+**Release steps:**
+```bash
+# 1. Update CHANGELOG.md: move [Unreleased] to new version section
+#    Change: ## [Unreleased]
+#    To:     ## [1.x.x] - YYYY-MM-DD
+
+# 2. Update version in README.md package reference if needed
+
+# 3. Commit the release prep
+git add CHANGELOG.md README.md
+git commit -m "Prepare release v1.x.x"
+
+# 4. Create annotated tag
+git tag -a v1.x.x -m "Release v1.x.x"
+
+# 5. Push commit and tag
+git push origin main
+git push origin v1.x.x
+
+# 6. Create GitHub Release
+gh release create v1.x.x --title "v1.x.x" --notes-file <(sed -n '/## \[1.x.x\]/,/## \[/p' CHANGELOG.md | head -n -1)
+```
+
+**Post-release:**
+- Close the GitHub milestone
+- Notify dependent projects (e.g., MailTriage) that they can update their version reference
