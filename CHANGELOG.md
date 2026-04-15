@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `searchMessages()` now uses UIDs internally to prevent race conditions (#1)
 
+### Fixed
+- `fetchMessage()` and `fetchMessageBody()` now verify UID in response to prevent returning wrong data (#2)
+
 ### Deprecated
 - `listMessages()` - use `listMessageUIDs()` instead (sequence numbers are unstable)
 
