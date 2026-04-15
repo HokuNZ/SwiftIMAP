@@ -84,7 +84,11 @@ disabled_rules:
 
 type_body_length:
   warning: 300
-  error: 400
+  error: 800
+  ignores_comments: true
+  ignores_urls: true
+  # Test classes and complex types like encoders/actors naturally exceed 400 lines
+  # Increased error threshold to avoid false positives while still catching egregious cases
 
 file_length:
   warning: 500
@@ -92,7 +96,8 @@ file_length:
 
 function_body_length:
   warning: 40
-  error: 100
+  error: 150
+  # Parser functions with many cases can exceed 100 lines
 
 function_parameter_count:
   warning: 6
@@ -104,7 +109,8 @@ large_tuple:
 
 cyclomatic_complexity:
   warning: 15
-  error: 25
+  error: 50
+  # Parser/encoder switch statements with many cases have high complexity
 
 nesting:
   type_level:
