@@ -136,21 +136,20 @@ struct Connect: AsyncParsableCommand {
     
     private func searchMessages(client: IMAPClient) async throws {
         print("\nSearching messages in \(mailbox)...")
-        let messageNumbers = try await client.listMessages(in: mailbox)
-        
-        if messageNumbers.isEmpty {
+        let uids = try await client.listMessageUIDs(in: mailbox)
+
+        if uids.isEmpty {
             print("No messages found")
         } else {
-            print("Found \(messageNumbers.count) messages")
-            
-            // For now, just show the sequence numbers
-            // A more complete implementation would fetch details for each message
-            if messageNumbers.count <= 50 {
-                print("Sequence numbers: \(messageNumbers.map(String.init).joined(separator: ", "))")
+            print("Found \(uids.count) messages")
+
+            // Show the UIDs (stable identifiers, unlike sequence numbers)
+            if uids.count <= 50 {
+                print("UIDs: \(uids.map(String.init).joined(separator: ", "))")
             } else {
-                let first20 = messageNumbers.prefix(20).map(String.init).joined(separator: ", ")
-                print("Sequence numbers (first 20): \(first20)...")
-                print("(Showing 20 of \(messageNumbers.count) total messages)")
+                let first20 = uids.prefix(20).map(String.init).joined(separator: ", ")
+                print("UIDs (first 20): \(first20)...")
+                print("(Showing 20 of \(uids.count) total messages)")
             }
             
             print("\nTip: To see message details, use the interactive mode or fetch command with a specific UID")

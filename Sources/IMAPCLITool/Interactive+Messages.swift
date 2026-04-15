@@ -109,30 +109,38 @@ extension Interactive {
     func listMessagesWithDetails(client: IMAPClient, mailbox: String) async throws {
         print("Fetching message list...")
 
-        let messageNumbers = try await client.listMessages(in: mailbox)
+        // Use UID-based search for stability
+        let uids = try await client.listMessageUIDs(in: mailbox)
 
-        if messageNumbers.isEmpty {
+        if uids.isEmpty {
             print("No messages found in \(mailbox)")
             return
         }
 
-        print("Found \(messageNumbers.count) messages. Fetching details...")
+        print("Found \(uids.count) messages. Fetching details...")
 
-        let limit = min(messageNumbers.count, 20)
-        let messagesToShow = Array(messageNumbers.suffix(limit))
+        let limit = min(uids.count, 20)
+        let uidsToShow = Array(uids.suffix(limit))
 
         print("\nMessages in \(mailbox) (showing \(limit) most recent):")
         print(String(repeating: "=", count: 100))
 
-        var messages: [(seq: UInt32, summary: MessageSummary)] = []
+        var messages: [(uid: UInt32, summary: MessageSummary)] = []
+        var failedCount = 0
 
-        for sequenceNumber in messagesToShow {
-            if let summary = try await client.fetchMessageBySequence(sequenceNumber: sequenceNumber, in: mailbox) {
-                messages.append((sequenceNumber, summary))
+        for uid in uidsToShow {
+            if let summary = try await client.fetchMessage(uid: uid, in: mailbox) {
+                messages.append((uid, summary))
+            } else {
+                failedCount += 1
             }
         }
 
-        for (sequenceNumber, summary) in messages.reversed() {
+        if failedCount > 0 {
+            print("\nNote: \(failedCount) message(s) could not be fetched (may have been deleted)")
+        }
+
+        for (uid, summary) in messages.reversed() {
             let fromAddr = summary.envelope?.from.first
             let from = fromAddr?.displayName ?? fromAddr?.emailAddress ?? "Unknown"
             let subject = summary.envelope?.subject ?? "(No subject)"
@@ -140,7 +148,7 @@ extension Interactive {
             let size = formatBytes(summary.size)
             let flags = summary.flags.map { $0.rawValue }.joined(separator: " ")
 
-            print("\n#\(sequenceNumber) (UID: \(summary.uid))")
+            print("\nUID: \(uid)")
             print("  Date: \(date)")
             print("  From: \(from)")
             print("  Subject: \(subject)")
@@ -156,8 +164,8 @@ extension Interactive {
             print(String(repeating: "-", count: 100))
         }
 
-        if messageNumbers.count > limit {
-            print("\n(Showing \(limit) of \(messageNumbers.count) total messages)")
+        if uids.count > limit {
+            print("\n(Showing \(limit) of \(uids.count) total messages)")
         }
     }
 

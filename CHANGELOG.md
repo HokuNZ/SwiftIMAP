@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `listMessageUIDs()` method for stable message identifiers using UID SEARCH (#1)
+
+### Changed
+- `searchMessages()` now uses UIDs internally to prevent race conditions (#1)
+
+### Deprecated
+- `listMessages()` - use `listMessageUIDs()` instead (sequence numbers are unstable)
+
 ## [1.0.0] - 2026-04-13
 
 ### Added

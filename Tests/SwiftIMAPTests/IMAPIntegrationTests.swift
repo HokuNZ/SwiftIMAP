@@ -669,10 +669,11 @@ final class IMAPIntegrationTests: XCTestCase {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
         mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
-        mockServer.setResponse(for: "SEARCH", response: "* SEARCH 1 2")
-        mockServer.setResponse(for: "FETCH", response: """
-            * 1 FETCH (UID 10 FLAGS (\\Seen) INTERNALDATE "01-Jan-2024 12:00:00 +0000" RFC822.SIZE 100 ENVELOPE ("Mon, 1 Jan 2024 12:00:00 +0000" "Search Subject" (("Sender" NIL "sender" "example.com")) NIL NIL (("Recipient" NIL "recipient" "example.com")) NIL NIL NIL "<search-id@example.com>"))
-            """)
+        // searchMessages() now uses UID SEARCH and UID FETCH for stability
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 10 20")
+        // Set specific responses for each UID fetch (more realistic mock behavior)
+        mockServer.setResponse(for: "UID FETCH 10", response: "* 1 FETCH (UID 10 FLAGS (\\Seen) INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 100 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"Search Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<search-id@example.com>\"))")
+        mockServer.setResponse(for: "UID FETCH 20", response: "* 2 FETCH (UID 20 FLAGS () INTERNALDATE \"02-Jan-2024 12:00:00 +0000\" RFC822.SIZE 200 ENVELOPE (\"Tue, 2 Jan 2024 12:00:00 +0000\" \"Another Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<search-id2@example.com>\"))")
 
         let config = IMAPConfiguration(
             hostname: "localhost",
@@ -690,6 +691,9 @@ final class IMAPIntegrationTests: XCTestCase {
 
         let singleCriteria = try await client.searchMessages(in: "INBOX", matching: [.from("sender@example.com")])
         XCTAssertEqual(singleCriteria.count, 2)
+        // Verify we got the correct UIDs (not duplicates or wrong messages)
+        let returnedUIDs = Set(singleCriteria.map { $0.uid })
+        XCTAssertEqual(returnedUIDs, [10, 20], "Should return messages with UIDs 10 and 20")
 
         let andCriteria = try await client.searchMessages(in: "INBOX", matching: [.from("sender@example.com"), .subject("Search Subject")])
         XCTAssertEqual(andCriteria.count, 2)
@@ -1040,9 +1044,14 @@ class MockIMAPServer {
             return responses["AUTHENTICATE \(mechanism)"] ?? "+"
         }
         
-        // Find response for command
+        // Find response for command (also try prefix matching for commands like "UID FETCH 100")
+        let prefixMatch = responses.keys.first { key in
+            commandAndArgs.uppercased().hasPrefix(key.uppercased())
+        }.flatMap { responses[$0] }
+
         if let response = responses[commandAndArgs]
             ?? responses[commandAndArgs.uppercased()]
+            ?? prefixMatch
             ?? subcommandKey.flatMap({ responses[$0] ?? responses[$0.uppercased()] })
             ?? responses[cmd] {
             if response.hasPrefix("*") || response.hasPrefix("+") {

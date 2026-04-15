@@ -39,8 +39,8 @@ extension Interactive {
                 }
             case "all":
                 print("Searching all messages...")
-                let messageNumbers = try await client.listMessages(in: mailbox)
-                print("Found \(messageNumbers.count) messages (showing first 50)")
+                let uids = try await client.listMessageUIDs(in: mailbox)
+                print("Found \(uids.count) messages (showing first 50)")
 
                 searchResults = try await client.searchMessages(
                     in: mailbox,

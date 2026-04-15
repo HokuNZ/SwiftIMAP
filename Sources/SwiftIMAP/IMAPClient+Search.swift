@@ -3,7 +3,24 @@ import Foundation
 extension IMAPClient {
     // MARK: - Advanced Search
 
-    /// Search for messages using advanced criteria and return full message summaries
+    /// Search for messages using advanced criteria and return full message summaries.
+    ///
+    /// This method uses UID-based search and fetch operations internally, which are stable
+    /// even when the mailbox changes between operations. This prevents race conditions
+    /// that could occur if messages are deleted or moved during the search.
+    ///
+    /// - Note: If a message is deleted between search and fetch, it will be skipped and
+    ///   logged. The returned array may contain fewer items than the search found.
+    ///
+    /// - Parameters:
+    ///   - mailbox: The mailbox to search in
+    ///   - criteria: The search criteria
+    ///   - fetchItems: Items to fetch for each message (defaults to common envelope data)
+    ///   - limit: Optional limit on number of results (takes the most recent)
+    ///   - charset: Optional charset for the search
+    /// - Returns: Array of message summaries matching the criteria
+    /// - Throws: `IMAPError` if the connection fails, authentication is required,
+    ///           or the mailbox cannot be selected.
     public func searchMessages(
         in mailbox: String,
         criteria: IMAPCommand.SearchCriteria,
@@ -11,25 +28,29 @@ extension IMAPClient {
         limit: Int? = nil,
         charset: String? = nil
     ) async throws -> [MessageSummary] {
-        // First, get the sequence numbers matching the criteria
-        let sequenceNumbers = try await listMessages(in: mailbox, searchCriteria: criteria, charset: charset)
+        // Use UID SEARCH to get stable UIDs (not sequence numbers which can shift)
+        let uids = try await listMessageUIDs(in: mailbox, searchCriteria: criteria, charset: charset)
 
-        guard !sequenceNumbers.isEmpty else {
+        guard !uids.isEmpty else {
             return []
         }
 
-        // Apply limit if specified
-        let numbersToFetch = if let limit = limit {
-            Array(sequenceNumbers.suffix(limit))
+        // Apply limit if specified (UIDs are strictly ascending per RFC 3501, so suffix gives most recent)
+        let uidsToFetch = if let limit = limit {
+            Array(uids.suffix(limit))
         } else {
-            sequenceNumbers
+            uids
         }
 
-        // Fetch details for each message
+        // Fetch details for each message by UID (stable identifier)
         var summaries: [MessageSummary] = []
-        for seqNum in numbersToFetch {
-            if let summary = try await fetchMessageBySequence(sequenceNumber: seqNum, in: mailbox, items: fetchItems) {
+        for uid in uidsToFetch {
+            if let summary = try await fetchMessage(uid: uid, in: mailbox, items: fetchItems) {
                 summaries.append(summary)
+            } else {
+                // Message may have been deleted between search and fetch - this is expected
+                // in concurrent access scenarios and is why we use UIDs (to avoid wrong message)
+                logger.debug("UID \(uid) not found during fetch - message may have been deleted")
             }
         }
 

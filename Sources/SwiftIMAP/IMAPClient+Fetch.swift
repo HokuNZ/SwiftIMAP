@@ -1,6 +1,57 @@
 import Foundation
 
 extension IMAPClient {
+    /// Returns message UIDs matching the search criteria.
+    ///
+    /// This method uses `UID SEARCH` which returns stable UIDs that persist even when
+    /// messages are deleted or moved. Use this for any multi-step operation where you
+    /// need to reference messages after the initial search.
+    ///
+    /// - Parameters:
+    ///   - mailbox: The mailbox to search in
+    ///   - searchCriteria: The search criteria (defaults to `.all`)
+    ///   - charset: Optional charset for the search (e.g., "UTF-8")
+    /// - Returns: An array of UIDs matching the criteria
+    /// - Throws: `IMAPError` if the connection fails, authentication is required,
+    ///           or the mailbox cannot be selected.
+    public func listMessageUIDs(
+        in mailbox: String,
+        searchCriteria: IMAPCommand.SearchCriteria = .all,
+        charset: String? = nil
+    ) async throws -> [UID] {
+        try await retryHandler.executeWithReconnect(
+            operation: "listMessageUIDs",
+            needsReconnect: { error in
+                (error as? IMAPError)?.requiresReconnection ?? false
+            },
+            reconnect: {
+                try await self.connect()
+            },
+            work: {
+                _ = try await self.selectMailbox(mailbox)
+
+                // Use UID SEARCH to get stable UIDs instead of sequence numbers
+                let responses = try await self.connection.sendCommand(
+                    .uid(.search(charset: charset, criteria: searchCriteria))
+                )
+
+                for response in responses {
+                    if case .untagged(.search(let numbers)) = response {
+                        return numbers
+                    }
+                }
+
+                return []
+            }
+        )
+    }
+
+    /// Returns message sequence numbers matching the search criteria.
+    ///
+    /// - Warning: Sequence numbers are position-dependent and can change when messages
+    ///   are deleted or moved. For multi-step operations, use ``listMessageUIDs(in:searchCriteria:charset:)``
+    ///   instead to avoid race conditions.
+    @available(*, deprecated, message: "Use listMessageUIDs() instead - sequence numbers are unstable when mailbox changes")
     public func listMessages(
         in mailbox: String,
         searchCriteria: IMAPCommand.SearchCriteria = .all,
