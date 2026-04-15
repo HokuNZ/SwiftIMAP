@@ -231,7 +231,15 @@ public struct MimePart {
     
     /// Check if this part is an attachment
     public var isAttachment: Bool {
-        if isInline {
+        // Inline parts WITHOUT a filename are truly embedded (e.g., cid: referenced images)
+        if isInline && filename == nil {
+            return false
+        }
+
+        // Inline images with Content-ID are embedded via cid: references in HTML
+        // These should not be treated as attachments even if they have a filename
+        if isInline, let mimeType = mimeType?.lowercased(),
+           mimeType.hasPrefix("image/"), contentID != nil {
             return false
         }
 

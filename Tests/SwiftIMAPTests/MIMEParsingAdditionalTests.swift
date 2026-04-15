@@ -35,7 +35,9 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         XCTAssertEqual(parsed?.plainTextContent, "Hello World")
     }
 
-    func testInlineDispositionOverridesAttachment() throws {
+    func testInlinePartWithFilenameIsAttachment() throws {
+        // Issue #5: Inline parts WITH a filename should be treated as attachments
+        // (e.g., Apple Mail marks PDF attachments as inline with filename)
         let messageData = """
         From: sender@example.com
         To: recipient@example.com
@@ -54,7 +56,42 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         XCTAssertEqual(part?.mimeType, "image/png")
         XCTAssertEqual(part?.filename, "inline.png")
         XCTAssertTrue(part?.isInline ?? false)
-        XCTAssertFalse(part?.isAttachment ?? true)
+        XCTAssertTrue(part?.isAttachment ?? false)  // Changed: inline WITH filename IS attachment
+        XCTAssertEqual(parsed?.attachments.count, 1)
+    }
+
+    func testInlinePartWithoutFilenameIsNotAttachment() throws {
+        // Truly embedded content (e.g., cid: referenced images) should NOT be attachments
+        let boundary = "boundary"
+        let messageData = """
+        From: sender@example.com
+        To: recipient@example.com
+        Subject: Inline Image
+        Content-Type: multipart/related; boundary="\(boundary)"
+
+        --\(boundary)
+        Content-Type: text/html
+
+        <html><body><img src="cid:img1"></body></html>
+        --\(boundary)
+        Content-Type: image/png
+        Content-Disposition: inline
+        Content-ID: <img1>
+        Content-Transfer-Encoding: base64
+
+        AAA=
+        --\(boundary)--
+        """.data(using: .utf8)!
+
+        let summary = makeSummary()
+        let parsed = try summary.parseMimeContent(from: messageData)
+        let inlinePart = parsed?.parts.first { $0.contentID != nil }
+
+        XCTAssertNotNil(inlinePart)
+        XCTAssertTrue(inlinePart?.isInline ?? false)
+        XCTAssertNil(inlinePart?.filename)
+        XCTAssertFalse(inlinePart?.isAttachment ?? true)  // No filename = NOT attachment
+        XCTAssertEqual(parsed?.attachments.count, 0)
     }
 
     func testAttachmentDetectedByContentTypeWithoutDisposition() throws {
@@ -94,6 +131,66 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.decodedText, "NotBase64!!")
+    }
+
+    func testInlineImageWithContentIdIsNotAttachment() throws {
+        // Edge case: inline image WITH filename but also Content-ID
+        // These are embedded via cid: in HTML and should NOT be attachments
+        let boundary = "boundary"
+        let messageData = """
+        From: sender@example.com
+        To: recipient@example.com
+        Subject: Email with embedded logo
+        Content-Type: multipart/related; boundary="\(boundary)"
+
+        --\(boundary)
+        Content-Type: text/html
+
+        <html><body><img src="cid:logo"></body></html>
+        --\(boundary)
+        Content-Type: image/png; name="company-logo.png"
+        Content-Disposition: inline; filename="company-logo.png"
+        Content-ID: <logo>
+        Content-Transfer-Encoding: base64
+
+        AAA=
+        --\(boundary)--
+        """.data(using: .utf8)!
+
+        let summary = makeSummary()
+        let parsed = try summary.parseMimeContent(from: messageData)
+        let imagePart = parsed?.parts.first { $0.contentID != nil }
+
+        XCTAssertNotNil(imagePart)
+        XCTAssertEqual(imagePart?.filename, "company-logo.png")
+        XCTAssertEqual(imagePart?.contentID, "<logo>")
+        XCTAssertTrue(imagePart?.isInline ?? false)
+        XCTAssertFalse(imagePart?.isAttachment ?? true)  // Has Content-ID = embedded, not attachment
+        XCTAssertEqual(parsed?.attachments.count, 0)
+    }
+
+    func testAppleMailInlinePdfIsAttachment() throws {
+        // Real-world case from issue #5: Apple Mail marks PDFs as inline with filename
+        let messageData = """
+        From: sender@example.com
+        To: recipient@example.com
+        Subject: Apple Mail PDF
+        Content-Type: application/pdf; x-unix-mode=0644; name="document.pdf"
+        Content-Disposition: inline; filename="document.pdf"
+        Content-Transfer-Encoding: base64
+
+        JVBERi0xLjQKJeLjz9MKCg==
+        """.data(using: .utf8)!
+
+        let summary = makeSummary()
+        let parsed = try summary.parseMimeContent(from: messageData)
+        let part = parsed?.parts.first
+
+        XCTAssertEqual(part?.filename, "document.pdf")
+        XCTAssertEqual(part?.mimeType, "application/pdf")
+        XCTAssertTrue(part?.isInline ?? false)
+        XCTAssertTrue(part?.isAttachment ?? false)
+        XCTAssertEqual(parsed?.attachments.count, 1)
     }
 
     private func makeSummary() -> MessageSummary {
