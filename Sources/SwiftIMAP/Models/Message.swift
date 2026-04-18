@@ -10,14 +10,18 @@ public struct MessageSummary: Sendable {
     public let internalDate: Date
     public let size: UInt32
     public let envelope: Envelope?
-    
+    /// The References header, containing message IDs for threading.
+    /// This is fetched separately from the envelope via BODY.PEEK[HEADER.FIELDS (REFERENCES)].
+    public let references: String?
+
     public init(
         uid: UID,
         sequenceNumber: MessageSequenceNumber,
         flags: Set<Flag> = [],
         internalDate: Date,
         size: UInt32,
-        envelope: Envelope? = nil
+        envelope: Envelope? = nil,
+        references: String? = nil
     ) {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
@@ -25,6 +29,7 @@ public struct MessageSummary: Sendable {
         self.internalDate = internalDate
         self.size = size
         self.envelope = envelope
+        self.references = references
     }
 }
 
