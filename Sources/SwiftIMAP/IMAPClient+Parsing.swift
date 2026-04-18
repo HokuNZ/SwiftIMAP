@@ -10,6 +10,7 @@ extension IMAPClient {
         var internalDate: Date?
         var size: UInt32?
         var envelope: Envelope?
+        var references: String?
 
         for attribute in attributes {
             switch attribute {
@@ -23,6 +24,11 @@ extension IMAPClient {
                 size = sizeValue
             case .envelope(let env):
                 envelope = parseEnvelope(env)
+            case .headerFields(let fields, let data):
+                // Parse References header if present
+                if fields.contains(where: { $0.uppercased() == "REFERENCES" }) {
+                    references = parseReferencesHeader(from: data)
+                }
             default:
                 break
             }
@@ -40,8 +46,38 @@ extension IMAPClient {
             flags: flags,
             internalDate: internalDate,
             size: size,
-            envelope: envelope
+            envelope: envelope,
+            references: references
         )
+    }
+
+    /// Parse the References header value from raw header data.
+    /// The data format is: "References: <id1> <id2> ...\r\n", optionally RFC 5322
+    /// folded across multiple lines with CRLF followed by WSP continuations.
+    func parseReferencesHeader(from data: Data) -> String? {
+        let headerText: String
+        if let utf8 = String(data: data, encoding: .utf8) {
+            headerText = utf8
+        } else if let latin1 = String(data: data, encoding: .isoLatin1) {
+            headerText = latin1
+        } else {
+            return nil
+        }
+
+        // RFC 5322 header unfolding: CRLF followed by WSP is a line continuation.
+        let unfolded = headerText
+            .replacingOccurrences(of: "\r\n ", with: " ")
+            .replacingOccurrences(of: "\r\n\t", with: " ")
+
+        for line in unfolded.components(separatedBy: "\r\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix("references:") {
+                let value = String(trimmed.dropFirst("references:".count))
+                    .trimmingCharacters(in: .whitespaces)
+                return value.isEmpty ? nil : value
+            }
+        }
+        return nil
     }
 
     func parseEnvelope(_ data: IMAPResponse.EnvelopeData) -> Envelope {
