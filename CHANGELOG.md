@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-18
+
+### Added
+- `MessageSummary.references` field exposing the RFC 5322 References header for email threading (#8, #9)
+  - Populated when the fetch includes `BODY[HEADER.FIELDS (REFERENCES)]` (with or without `.PEEK`)
+  - Handles RFC 5322 folded headers (CRLF + WSP continuations)
+  - Falls back to ISO-8859-1 when header bytes are not valid UTF-8
+
 ## [1.1.0] - 2026-04-18
 
 ### Added
