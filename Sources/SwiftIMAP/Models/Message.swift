@@ -11,7 +11,8 @@ public struct MessageSummary: Sendable {
     public let size: UInt32
     public let envelope: Envelope?
     /// The References header, containing message IDs for threading.
-    /// This is fetched separately from the envelope via BODY.PEEK[HEADER.FIELDS (REFERENCES)].
+    /// Populated when the fetch includes a `BODY[HEADER.FIELDS (REFERENCES)]`
+    /// item (with or without `.PEEK`).
     public let references: String?
 
     public init(
