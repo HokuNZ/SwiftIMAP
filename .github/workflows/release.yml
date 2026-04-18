@@ -40,48 +40,27 @@ jobs:
             artifact: swift-imap-linux-x64
           - os: macos-latest
             artifact: swift-imap-macos
-          - os: windows-latest
-            artifact: swift-imap-windows-x64
-    
+
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install Swift (Windows)
-      if: matrix.os == 'windows-latest'
-      uses: compnerd/gha-setup-swift@main
-      with:
-        swift-version: swift-6.0-release
-        swift-build: 6.0-RELEASE
-    
+
     - name: Build Release Binary
       run: swift build -c release
-    
+
     - name: Package Binary
       shell: bash
       run: |
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          BINARY_PATH=".build/release/swift-imap-tester.exe"
-        else
-          BINARY_PATH=".build/release/swift-imap-tester"
-        fi
-        
         mkdir -p dist
-        cp $BINARY_PATH dist/
+        cp .build/release/swift-imap-tester dist/
         cp README.md dist/
         cp LICENSE dist/ || echo "No LICENSE file"
-        
+
         cd dist
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          7z a -tzip ../${{ matrix.artifact }}.zip *
-        else
-          tar -czf ../${{ matrix.artifact }}.tar.gz *
-        fi
-    
+        tar -czf ../${{ matrix.artifact }}.tar.gz *
+
     - name: Upload Release Asset
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          ${{ matrix.artifact }}.tar.gz
-          ${{ matrix.artifact }}.zip
+        files: ${{ matrix.artifact }}.tar.gz
         token: ${{ secrets.GITHUB_TOKEN }}
