@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Pin `MimeParser` dependency by revision (`0903ca7e`, current upstream master HEAD) instead of `branch: "master"` (#12)
-  - Allows downstream consumers to depend on SwiftIMAP via any stable version constraint (`exactVersion`, `upToNextMajor`, etc.)
+- Pin `MimeParser` dependency by revision (`0903ca7e`) instead of `branch: "master"` (#12)
+  - Allows downstream consumers to depend on SwiftIMAP via any stable version constraint (for example, Exact Version or Up to Next Major)
   - Preserves current MimeParser behaviour exactly (no source impact)
 
 ## [1.2.0] - 2026-04-18
