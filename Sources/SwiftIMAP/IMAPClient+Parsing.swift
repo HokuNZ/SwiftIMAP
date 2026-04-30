@@ -96,7 +96,7 @@ extension IMAPClient {
 
         return Envelope(
             date: date,
-            subject: data.subject,
+            subject: data.subject.map(RFC2047.decode),
             from: fromList.flat,
             fromEntries: fromList.entries,
             sender: senderList.flat,
@@ -157,7 +157,7 @@ extension IMAPClient {
                 continue
             }
 
-            let address = Address(name: addressData.name, mailbox: mailbox, host: host)
+            let address = Address(name: addressData.name.map(RFC2047.decode), mailbox: mailbox, host: host)
             flat.append(address)
 
             if currentGroupName != nil {

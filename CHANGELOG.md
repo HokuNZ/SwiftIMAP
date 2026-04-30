@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-04-30
+
+### Added
+- `RFC2047` decoder applied at the envelope-parse boundary so `Envelope.subject` and `Address.name` come back as decoded human-readable text rather than raw `=?charset?encoding?text?=` source. Supports both base64 (`B`) and quoted-printable (`Q`) encodings, common charsets, and adjacent-encoded-word whitespace suppression per RFC 2047 §6.2. Malformed encoded-words pass through verbatim.
+
+### Fixed
+- Envelope parser no longer hangs indefinitely on quoted strings containing raw non-ASCII bytes that do not form valid UTF-8 sequences (#15). `extractLine()` falls back to ISO-8859-1 when UTF-8 decoding fails so every byte maps to a code point and the parser progresses; previously the line stayed in the buffer and the parser silently waited for a CRLF that had already arrived.
+
+### Changed
+- Repository guidance migrated from `CLAUDE.md` to `AGENTS.md` (#11). `CLAUDE.md` is now a one-line `@AGENTS.md` import.
+
 ## [1.2.1] - 2026-04-29
 
 ### Changed
