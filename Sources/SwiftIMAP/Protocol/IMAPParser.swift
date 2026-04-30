@@ -132,12 +132,19 @@ public final class IMAPParser {
         guard let crlfRange = buffer.range(of: Data([0x0D, 0x0A])) else {
             return nil
         }
-        
+
         let lineData = buffer.subdata(in: buffer.startIndex..<crlfRange.lowerBound)
-        guard let line = String(data: lineData, encoding: .utf8) else {
-            return nil
-        }
-        
+        // RFC 3501 says protocol bytes are 7-bit ASCII, but real-world servers
+        // (notably GreenMail with non-ASCII local-parts, and any server emitting
+        // raw UTF-8 without ENABLE UTF8=ACCEPT per RFC 6855) violate this. Strict
+        // UTF-8 decode used to return nil here, which left the line in the buffer
+        // forever — the parser would silently stall waiting for a CRLF that had
+        // already arrived. Fall back to Latin-1 so every byte maps to a code point;
+        // garbled-but-progressing beats hung-and-silent.
+        let line = String(data: lineData, encoding: .utf8)
+            ?? String(data: lineData, encoding: .isoLatin1)
+            ?? ""
+
         buffer.removeSubrange(buffer.startIndex..<crlfRange.upperBound)
         return line
     }
