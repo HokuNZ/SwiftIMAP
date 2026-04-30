@@ -139,11 +139,11 @@ public final class IMAPParser {
         // raw UTF-8 without ENABLE UTF8=ACCEPT per RFC 6855) violate this. Strict
         // UTF-8 decode used to return nil here, which left the line in the buffer
         // forever — the parser would silently stall waiting for a CRLF that had
-        // already arrived. Fall back to Latin-1 so every byte maps to a code point;
-        // garbled-but-progressing beats hung-and-silent.
+        // already arrived. Fall back to ISO-8859-1, which maps every byte 0x00–0xFF
+        // to a Unicode code point and so cannot fail for any finite byte sequence;
+        // the force-unwrap documents that invariant rather than swallowing a line.
         let line = String(data: lineData, encoding: .utf8)
-            ?? String(data: lineData, encoding: .isoLatin1)
-            ?? ""
+            ?? String(data: lineData, encoding: .isoLatin1)!
 
         buffer.removeSubrange(buffer.startIndex..<crlfRange.upperBound)
         return line
