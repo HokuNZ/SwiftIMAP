@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-05-01
+
+### Fixed
+- `RFC2047.decode` no longer returns the input unchanged when a Q-encoded encoded-word's first byte is non-ASCII (e.g. `=?UTF-8?Q?=C3=9E...?=` for `Þ...`, `=?utf-8?q?=F0=9F=8E=89?=` for `🎉`) (#17). The decoder's forward search for the closing `?=` was matching the boundary between the encoding marker and the first encoded byte; now it skips past the two structural `?` separators before searching, so `?=` after the second `?` is unambiguously the closer per RFC 2047 §2. Adds two regression tests for Q-encoded words leading with non-ASCII bytes; B-encoded inputs and Q-encoded inputs with ASCII-leading text were already covered.
+
 ## [1.2.2] - 2026-04-30
 
 ### Added
