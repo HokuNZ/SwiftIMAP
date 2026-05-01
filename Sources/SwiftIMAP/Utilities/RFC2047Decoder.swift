@@ -15,35 +15,8 @@ import Foundation
 /// - Malformed or unsupported encoded-words are passed through verbatim — the caller
 ///   never loses information they could otherwise have shown raw.
 public enum RFC2047 {
-
     public static func decode(_ input: String) -> String {
-        var runs: [Run] = []
-        var cursor = input.startIndex
-
-        while cursor < input.endIndex {
-            guard let startRange = input.range(of: "=?", range: cursor..<input.endIndex) else {
-                runs.append(.literal(String(input[cursor..<input.endIndex])))
-                break
-            }
-            if startRange.lowerBound > cursor {
-                runs.append(.literal(String(input[cursor..<startRange.lowerBound])))
-            }
-            guard let endRange = input.range(of: "?=", range: startRange.upperBound..<input.endIndex) else {
-                runs.append(.literal(String(input[startRange.lowerBound..<input.endIndex])))
-                break
-            }
-            let encodedWord = input[startRange.upperBound..<endRange.lowerBound]
-            let parts = encodedWord.split(separator: "?", maxSplits: 2, omittingEmptySubsequences: false)
-            if parts.count == 3,
-               let decoded = decodeEncodedWord(charset: String(parts[0]),
-                                               encoding: String(parts[1]),
-                                               text: String(parts[2])) {
-                runs.append(.decoded(decoded))
-            } else {
-                runs.append(.literal(String(input[startRange.lowerBound..<endRange.upperBound])))
-            }
-            cursor = endRange.upperBound
-        }
+        let runs = parseRuns(input)
 
         var output = ""
         for (index, run) in runs.enumerated() {
@@ -61,6 +34,44 @@ public enum RFC2047 {
             }
         }
         return output
+    }
+
+    private static func parseRuns(_ input: String) -> [Run] {
+        var runs: [Run] = []
+        var cursor = input.startIndex
+
+        while cursor < input.endIndex {
+            guard let startRange = input.range(of: "=?", range: cursor..<input.endIndex) else {
+                runs.append(.literal(String(input[cursor..<input.endIndex])))
+                break
+            }
+            if startRange.lowerBound > cursor {
+                runs.append(.literal(String(input[cursor..<startRange.lowerBound])))
+            }
+            // Skip past the two structural `?` separators (after charset, after encoding)
+            // before searching for the closing `?=`. RFC 2047 §2 forbids `?` inside the
+            // encoded-text, so `?=` after the second `?` is unambiguously the closer.
+            // Searching from startRange.upperBound directly false-matches Q-encoded text
+            // whose first byte is non-ASCII, where the separator after the encoding marker
+            // (`Q?`) meets the leading `=` of the first encoded byte (`=C3` etc.) and
+            // produces a `?=` substring inside the encoded-text.
+            guard let charsetEnd = input.range(of: "?", range: startRange.upperBound..<input.endIndex),
+                  let encodingEnd = input.range(of: "?", range: charsetEnd.upperBound..<input.endIndex),
+                  let endRange = input.range(of: "?=", range: encodingEnd.upperBound..<input.endIndex) else {
+                runs.append(.literal(String(input[startRange.lowerBound..<input.endIndex])))
+                break
+            }
+            let charset = String(input[startRange.upperBound..<charsetEnd.lowerBound])
+            let encoding = String(input[charsetEnd.upperBound..<encodingEnd.lowerBound])
+            let text = String(input[encodingEnd.upperBound..<endRange.lowerBound])
+            if let decoded = decodeEncodedWord(charset: charset, encoding: encoding, text: text) {
+                runs.append(.decoded(decoded))
+            } else {
+                runs.append(.literal(String(input[startRange.lowerBound..<endRange.upperBound])))
+            }
+            cursor = endRange.upperBound
+        }
+        return runs
     }
 
     // MARK: - Internals
@@ -92,9 +103,9 @@ public enum RFC2047 {
             if scalar == "_" {
                 bytes.append(0x20)
             } else if scalar == "=" {
-                guard let hi = iterator.next(),
-                      let lo = iterator.next(),
-                      let value = UInt8(String(hi) + String(lo), radix: 16) else {
+                guard let highNibble = iterator.next(),
+                      let lowNibble = iterator.next(),
+                      let value = UInt8(String(highNibble) + String(lowNibble), radix: 16) else {
                     return nil
                 }
                 bytes.append(value)
