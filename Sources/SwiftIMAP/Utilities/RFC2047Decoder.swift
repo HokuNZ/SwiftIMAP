@@ -117,27 +117,38 @@ public enum RFC2047 {
         return Data(bytes)
     }
 
-    /// IANA charset name → Foundation encoding. Common names mapped directly; others
-    /// resolved via CoreFoundation's IANA registry. Unknown charsets fall back to UTF-8
-    /// so the caller still gets *something* readable for the common case where the
-    /// payload happens to be UTF-8 anyway.
+    /// IANA charset name → Foundation encoding. Common names mapped directly; on
+    /// Apple platforms unknown names are resolved via CoreFoundation's IANA registry.
+    /// On non-Apple platforms (where `CFStringConvertIANACharSetNameToEncoding` is
+    /// unavailable) and for charsets the registry doesn't recognise, we fall back to
+    /// UTF-8 so the caller still gets *something* readable for the common case where
+    /// the payload happens to be UTF-8 anyway.
     private static func stringEncoding(for charset: String) -> String.Encoding {
         switch charset.lowercased() {
-        case "utf-8", "utf8":         return .utf8
-        case "us-ascii", "ascii":     return .ascii
-        case "iso-8859-1", "latin1":  return .isoLatin1
-        case "iso-8859-2", "latin2":  return .isoLatin2
-        case "windows-1252", "cp1252": return .windowsCP1252
-        case "windows-1250":          return .windowsCP1250
-        case "windows-1251":          return .windowsCP1251
-        case "windows-1253":          return .windowsCP1253
-        case "windows-1254":          return .windowsCP1254
-        case "utf-16":                return .utf16
+        case "utf-8", "utf8":           return .utf8
+        case "us-ascii", "ascii":       return .ascii
+        case "iso-8859-1", "latin1":    return .isoLatin1
+        case "iso-8859-2", "latin2":    return .isoLatin2
+        case "windows-1252", "cp1252":  return .windowsCP1252
+        case "windows-1250":            return .windowsCP1250
+        case "windows-1251":            return .windowsCP1251
+        case "windows-1253":            return .windowsCP1253
+        case "windows-1254":            return .windowsCP1254
+        case "utf-16":                  return .utf16
+        case "utf-16le":                return .utf16LittleEndian
+        case "utf-16be":                return .utf16BigEndian
+        case "shift_jis", "shift-jis":  return .shiftJIS
+        case "iso-2022-jp":             return .iso2022JP
+        case "euc-jp":                  return .japaneseEUC
         default:
+            #if canImport(Darwin)
             let cfEncoding = CFStringConvertIANACharSetNameToEncoding(charset as CFString)
             guard cfEncoding != kCFStringEncodingInvalidId else { return .utf8 }
             let nsEncoding = CFStringConvertEncodingToNSStringEncoding(cfEncoding)
             return String.Encoding(rawValue: nsEncoding)
+            #else
+            return .utf8
+            #endif
         }
     }
 }
