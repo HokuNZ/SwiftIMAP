@@ -17,6 +17,27 @@ import Foundation
 public enum RFC2047 {
 
     public static func decode(_ input: String) -> String {
+        let runs = parseRuns(input)
+
+        var output = ""
+        for (index, run) in runs.enumerated() {
+            switch run {
+            case .literal(let text):
+                if text.allSatisfy({ $0.isWhitespace }),
+                   index > 0, index < runs.count - 1,
+                   case .decoded = runs[index - 1],
+                   case .decoded = runs[index + 1] {
+                    continue
+                }
+                output += text
+            case .decoded(let text):
+                output += text
+            }
+        }
+        return output
+    }
+
+    private static func parseRuns(_ input: String) -> [Run] {
         var runs: [Run] = []
         var cursor = input.startIndex
 
@@ -51,23 +72,7 @@ public enum RFC2047 {
             }
             cursor = endRange.upperBound
         }
-
-        var output = ""
-        for (index, run) in runs.enumerated() {
-            switch run {
-            case .literal(let text):
-                if text.allSatisfy({ $0.isWhitespace }),
-                   index > 0, index < runs.count - 1,
-                   case .decoded = runs[index - 1],
-                   case .decoded = runs[index + 1] {
-                    continue
-                }
-                output += text
-            case .decoded(let text):
-                output += text
-            }
-        }
-        return output
+        return runs
     }
 
     // MARK: - Internals
@@ -99,9 +104,9 @@ public enum RFC2047 {
             if scalar == "_" {
                 bytes.append(0x20)
             } else if scalar == "=" {
-                guard let hi = iterator.next(),
-                      let lo = iterator.next(),
-                      let value = UInt8(String(hi) + String(lo), radix: 16) else {
+                guard let highNibble = iterator.next(),
+                      let lowNibble = iterator.next(),
+                      let value = UInt8(String(highNibble) + String(lowNibble), radix: 16) else {
                     return nil
                 }
                 bytes.append(value)
