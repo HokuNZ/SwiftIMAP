@@ -46,6 +46,28 @@ final class RFC2047DecoderTests: XCTestCase {
         XCTAssertEqual(RFC2047.decode("=?iso-8859-1?q?caf=E9?="), "café")
     }
 
+    /// Q-encoded text whose first byte is non-ASCII begins with `=` (e.g. `=C3` for `Þ`).
+    /// The separator after the encoding marker (`Q?`) then directly precedes the `=`,
+    /// producing a `?=` substring inside the encoded-text. A naive forward search for the
+    /// closing `?=` from after `=?` matches that boundary instead of the real closer.
+    /// Regression for the v1.2.2 envelope-decoder gap that surfaced in MailTriage UAT.
+    func testQuotedPrintableLeadingNonAscii() {
+        XCTAssertEqual(
+            RFC2047.decode("=?UTF-8?Q?=C3=9E=C3=B3rd=C3=ADs_Halld=C3=B3ra?="),
+            "Þórdís Halldóra"
+        )
+    }
+
+    /// Same shape as above but with a 4-byte UTF-8 leading sequence (emoji) and a trailing
+    /// plain-ASCII literal. Exercises both the closer-ambiguity fix and the literal
+    /// continuation past the close.
+    func testQuotedPrintableLeadingEmojiWithTrailingPlain() {
+        XCTAssertEqual(
+            RFC2047.decode("=?utf-8?q?=F0=9F=8E=89?= Welcome aboard!"),
+            "🎉 Welcome aboard!"
+        )
+    }
+
     // MARK: - Mixed plain and encoded text
 
     func testEncodedWordWithSurroundingPlainText() {
