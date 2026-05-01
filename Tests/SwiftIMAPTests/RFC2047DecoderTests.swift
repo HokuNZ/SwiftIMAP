@@ -133,4 +133,51 @@ final class RFC2047DecoderTests: XCTestCase {
         // to be valid UTF-8 ("Hello"), so decoding succeeds via the fallback.
         XCTAssertEqual(RFC2047.decode("=?x-unknown-charset?b?SGVsbG8=?="), "Hello")
     }
+
+    // MARK: - Cross-platform charsets without CoreFoundation
+    //
+    // These charsets are mapped explicitly in `stringEncoding(for:)` so they resolve
+    // identically on Linux (where the CoreFoundation IANA registry isn't available)
+    // and on Apple platforms. Each test base64-encodes a known byte sequence in the
+    // target charset and asserts it decodes to the expected Unicode string.
+
+    func testShiftJISCharsetResolves() {
+        // "あ" (U+3042) in Shift-JIS = 0x82 0xA0 → base64 "gqA="
+        XCTAssertEqual(RFC2047.decode("=?shift_jis?b?gqA=?="), "あ")
+    }
+
+    func testShiftJISDashAliasResolves() {
+        // The IANA-registered name uses an underscore but `shift-jis` shows up in the
+        // wild; both should map to .shiftJIS.
+        XCTAssertEqual(RFC2047.decode("=?shift-jis?b?gqA=?="), "あ")
+    }
+
+    func testISO2022JPCharsetResolves() {
+        // "あ" in ISO-2022-JP uses escape sequences: ESC$B (enter JIS X 0208), $", ESC(B (return ASCII)
+        // Bytes: 1B 24 42 24 22 1B 28 42 → base64 "GyRCJCIbKEI="
+        XCTAssertEqual(RFC2047.decode("=?iso-2022-jp?b?GyRCJCIbKEI=?="), "あ")
+    }
+
+    func testEUCJPCharsetResolves() {
+        // "あ" in EUC-JP = 0xA4 0xA2 → base64 "pKI=".
+        // swift-corelibs-foundation on Linux doesn't reliably decode .japaneseEUC via
+        // String(data:encoding:), so on Linux the encoded-word passes through verbatim
+        // (the documented fallback — no data loss). On Apple platforms it decodes.
+        let input = "=?euc-jp?b?pKI=?="
+        #if canImport(Darwin)
+        XCTAssertEqual(RFC2047.decode(input), "あ")
+        #else
+        XCTAssertEqual(RFC2047.decode(input), input)
+        #endif
+    }
+
+    func testUTF16LECharsetResolves() {
+        // "AB" in UTF-16LE = 41 00 42 00 → base64 "QQBCAA=="
+        XCTAssertEqual(RFC2047.decode("=?utf-16le?b?QQBCAA==?="), "AB")
+    }
+
+    func testUTF16BECharsetResolves() {
+        // "AB" in UTF-16BE = 00 41 00 42 → base64 "AEEAQg=="
+        XCTAssertEqual(RFC2047.decode("=?utf-16be?b?AEEAQg==?="), "AB")
+    }
 }

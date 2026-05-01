@@ -74,6 +74,27 @@ jobs:
         name: documentation
         path: docs.tar.gz
 
+  test-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: swift:5.10
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cache Swift PM dependencies
+      uses: actions/cache@v4
+      with:
+        path: .build
+        key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+        restore-keys: |
+          ${{ runner.os }}-spm-
+
+    - name: Build
+      run: swift build -v
+
+    - name: Run tests
+      run: swift test -v --skip GreenMailIntegrationTests
+
   greenmail-integration:
     runs-on: ubuntu-latest
     strategy:
@@ -107,7 +128,7 @@ jobs:
       run: swift test --filter GreenMailIntegrationTests
 
   release:
-    needs: [test-macos, lint, greenmail-integration]
+    needs: [test-macos, test-linux, lint, greenmail-integration]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
