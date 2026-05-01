@@ -15,7 +15,6 @@ import Foundation
 /// - Malformed or unsupported encoded-words are passed through verbatim — the caller
 ///   never loses information they could otherwise have shown raw.
 public enum RFC2047 {
-
     public static func decode(_ input: String) -> String {
         let runs = parseRuns(input)
 

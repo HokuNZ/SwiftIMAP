@@ -2,7 +2,6 @@ import XCTest
 @testable import SwiftIMAP
 
 final class RFC2047DecoderTests: XCTestCase {
-
     // MARK: - Plain text passes through unchanged
 
     func testPlainAsciiPassesThrough() {
