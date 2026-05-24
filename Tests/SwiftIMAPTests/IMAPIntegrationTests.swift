@@ -1,6 +1,7 @@
 import XCTest
 @testable import SwiftIMAP
 import NIO
+import NIOConcurrencyHelpers
 
 /// Integration tests for IMAP authentication flow
 /// These tests use a mock IMAP server to verify the complete authentication process
@@ -105,7 +106,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
 
     func testPreauthGreetingSkipsAuthentication() async throws {
-        mockServer.responses["GREETING"] = "* PREAUTH IMAP4rev1"
+        mockServer.setResponse(for: "GREETING", response: "* PREAUTH IMAP4rev1")
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=PLAIN")
         
         let config = IMAPConfiguration(
@@ -128,7 +129,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
 
     func testByeGreetingClosesConnection() async {
-        mockServer.responses["GREETING"] = "* BYE Server shutting down"
+        mockServer.setResponse(for: "GREETING", response: "* BYE Server shutting down")
 
         let config = IMAPConfiguration(
             hostname: "localhost",
@@ -178,7 +179,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
 
     func testStartTLSWithPreauthIsRejected() async {
-        mockServer.responses["GREETING"] = "* PREAUTH IMAP4rev1"
+        mockServer.setResponse(for: "GREETING", response: "* PREAUTH IMAP4rev1")
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 STARTTLS")
 
         let config = IMAPConfiguration(
@@ -933,35 +934,57 @@ final class IMAPIntegrationTests: XCTestCase {
 
 // MARK: - Mock IMAP Server
 
+/// Mock IMAP server used by the in-process integration tests. State touched by
+/// both the test thread (set/asserted) and the NIO event loop (handler
+/// callbacks) lives in the `_`-prefixed properties below, serialised via
+/// `lock`. `channel` is only touched from the test task (start/shutdown). See
+/// #21 for the failure mode this fixes.
 class MockIMAPServer {
+    private let lock = NIOLock()
     private let eventLoopGroup: EventLoopGroup
     private var channel: Channel?
-    var responses: [String: String] = [:]
-    private var authenticateResponse: String?
-    private var authenticateChallenges: [String] = []
-    private var pendingAuthTag: String?
-    private var pendingAuthChallenges: [String] = []
-    private(set) var receivedCommands: [String] = []
-    private(set) var receivedContinuations: [String] = []
-    
+
+    private var _responses: [String: String] = [:]
+    private var _authenticateResponse: String?
+    private var _authenticateChallenges: [String] = []
+    private var _pendingAuthTag: String?
+    private var _pendingAuthChallenges: [String] = []
+    private var _receivedCommands: [String] = []
+    private var _receivedContinuations: [String] = []
+
+    var receivedCommands: [String] {
+        lock.withLock { Array(_receivedCommands) }
+    }
+
+    var receivedContinuations: [String] {
+        lock.withLock { Array(_receivedContinuations) }
+    }
+
+    var isAwaitingContinuation: Bool {
+        lock.withLock { _pendingAuthTag != nil }
+    }
+
     init(eventLoopGroup: EventLoopGroup) {
         self.eventLoopGroup = eventLoopGroup
-        // Set default greeting
-        responses["GREETING"] = "* OK Mock IMAP Server Ready"
+        _responses["GREETING"] = "* OK Mock IMAP Server Ready"
     }
-    
+
     func setResponse(for command: String, response: String) {
-        responses[command] = response
+        lock.withLock { _responses[command] = response }
     }
-    
+
     func setAuthenticateResponse(_ response: String) {
-        authenticateResponse = response
+        lock.withLock { _authenticateResponse = response }
     }
 
     func setAuthenticateChallenges(_ challenges: [String]) {
-        authenticateChallenges = challenges
+        lock.withLock { _authenticateChallenges = challenges }
     }
-    
+
+    func greeting() -> String {
+        lock.withLock { _responses["GREETING"] ?? "* OK Ready" }
+    }
+
     func start() async throws -> Int {
         let bootstrap = ServerBootstrap(group: eventLoopGroup)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -973,39 +996,42 @@ class MockIMAPServer {
                     MockIMAPHandler(server: self)
                 ])
             }
-        
+
         channel = try await bootstrap.bind(host: "localhost", port: 0).get()
         guard let localAddress = channel?.localAddress,
               let port = localAddress.port else {
             throw IMAPError.connectionError("Failed to get server port")
         }
-        
+
         return port
     }
-    
+
     func shutdown() async throws {
         try await channel?.close()
     }
-    
-    func handleCommand(_ command: String) -> String {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        receivedCommands.append(trimmed)
 
-        if let pendingTag = pendingAuthTag {
-            receivedContinuations.append(trimmed)
-            if !pendingAuthChallenges.isEmpty {
-                let challenge = pendingAuthChallenges.removeFirst()
+    func handleCommand(_ command: String) -> String {
+        lock.withLock { handleCommandLocked(command) }
+    }
+
+    private func handleCommandLocked(_ command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        _receivedCommands.append(trimmed)
+
+        if let pendingTag = _pendingAuthTag {
+            _receivedContinuations.append(trimmed)
+            if !_pendingAuthChallenges.isEmpty {
+                let challenge = _pendingAuthChallenges.removeFirst()
                 return challenge.isEmpty ? "+" : "+ \(challenge)"
             }
-            pendingAuthTag = nil
-            return formatAuthenticateResponse(tag: pendingTag)
+            _pendingAuthTag = nil
+            return formatAuthenticateResponseLocked(tag: pendingTag)
         }
-        
+
         guard !trimmed.isEmpty else {
             return "* BAD Empty command"
         }
-        
-        // Extract tag and command
+
         let parts = trimmed.split(separator: " ", maxSplits: 2)
         guard parts.count >= 2 else {
             return ""
@@ -1016,75 +1042,69 @@ class MockIMAPServer {
         guard isTagged else {
             return ""
         }
-        
+
         let tag = tagCandidate
         let cmd = String(parts[1]).uppercased()
         let remainder = parts.count > 2 ? String(parts[2]) : ""
         let commandAndArgs = String(trimmed.dropFirst(tag.count + 1))
         let remainderParts = remainder.split(separator: " ", maxSplits: 1)
         let subcommandKey = remainderParts.first.map { "\(cmd) \(String($0))" }
-        
+
         if cmd == "AUTHENTICATE" {
             let remainderParts = remainder.split(separator: " ", maxSplits: 1)
             let mechanism = remainderParts.first.map { String($0).uppercased() } ?? ""
             let hasInitialResponse = remainderParts.count > 1
 
-            if !authenticateChallenges.isEmpty {
-                pendingAuthTag = tag
-                pendingAuthChallenges = authenticateChallenges
-                let challenge = pendingAuthChallenges.removeFirst()
+            if !_authenticateChallenges.isEmpty {
+                _pendingAuthTag = tag
+                _pendingAuthChallenges = _authenticateChallenges
+                let challenge = _pendingAuthChallenges.removeFirst()
                 return challenge.isEmpty ? "+" : "+ \(challenge)"
             }
 
             if hasInitialResponse {
-                return formatAuthenticateResponse(tag: tag)
+                return formatAuthenticateResponseLocked(tag: tag)
             }
 
-            pendingAuthTag = tag
-            return responses["AUTHENTICATE \(mechanism)"] ?? "+"
+            _pendingAuthTag = tag
+            return _responses["AUTHENTICATE \(mechanism)"] ?? "+"
         }
-        
-        // Find response for command (also try prefix matching for commands like "UID FETCH 100")
-        let prefixMatch = responses.keys.first { key in
-            commandAndArgs.uppercased().hasPrefix(key.uppercased())
-        }.flatMap { responses[$0] }
 
-        if let response = responses[commandAndArgs]
-            ?? responses[commandAndArgs.uppercased()]
+        let prefixMatch = _responses.keys.first { key in
+            commandAndArgs.uppercased().hasPrefix(key.uppercased())
+        }.flatMap { _responses[$0] }
+
+        if let response = _responses[commandAndArgs]
+            ?? _responses[commandAndArgs.uppercased()]
             ?? prefixMatch
-            ?? subcommandKey.flatMap({ responses[$0] ?? responses[$0.uppercased()] })
-            ?? responses[cmd] {
+            ?? subcommandKey.flatMap({ _responses[$0] ?? _responses[$0.uppercased()] })
+            ?? _responses[cmd] {
             if response.hasPrefix("*") || response.hasPrefix("+") {
                 return "\(response)\r\n\(tag) OK \(cmd) completed"
             }
-            
+
             let upper = response.uppercased()
             if upper.hasPrefix("OK") || upper.hasPrefix("NO") || upper.hasPrefix("BAD") {
                 return "\(tag) \(response)"
             }
-            
+
             return "\(tag) OK \(response)"
         }
-        
-        // Default response
+
         return "\(tag) OK \(cmd) completed"
     }
-    
-    var isAwaitingContinuation: Bool {
-        pendingAuthTag != nil
-    }
-    
-    private func formatAuthenticateResponse(tag: String) -> String {
-        let response = authenticateResponse ?? "OK AUTHENTICATE completed"
-        
+
+    private func formatAuthenticateResponseLocked(tag: String) -> String {
+        let response = _authenticateResponse ?? "OK AUTHENTICATE completed"
+
         if response.hasPrefix("*") {
             return "\(response)\r\n\(tag) OK AUTHENTICATE completed"
         }
-        
+
         if response.uppercased().hasPrefix("\(tag) ") {
             return response
         }
-        
+
         return "\(tag) \(response)"
     }
 }
@@ -1136,8 +1156,7 @@ class MockIMAPHandler: ChannelInboundHandler {
     }
     
     func channelActive(context: ChannelHandlerContext) {
-        // Send greeting
-        let greeting = server?.responses["GREETING"] ?? "* OK Ready"
+        let greeting = server?.greeting() ?? "* OK Ready"
         context.writeAndFlush(wrapOutboundOut(greeting), promise: nil)
         hasGreeted = true
     }
