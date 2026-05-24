@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-05-24
+
 ### Fixed
 - `RFC2047Decoder` now compiles on Linux. The unknown-charset fallback used CoreFoundation's IANA registry (`CFStringConvertIANACharSetNameToEncoding` etc.), which is unavailable in swift-corelibs-foundation, so v1.2.2 and v1.2.3 failed to build on non-Apple platforms. The CoreFoundation path is now gated on `canImport(Darwin)`; Linux falls back to UTF-8 for unrecognised charsets, matching the existing "unknown CF charset → UTF-8" semantics on Apple platforms. Also adds explicit cases for `shift_jis`, `iso-2022-jp`, `euc-jp`, `utf-16le`, and `utf-16be` so common non-Latin charsets resolve to the correct encoding cross-platform without going through the CF path.
 
