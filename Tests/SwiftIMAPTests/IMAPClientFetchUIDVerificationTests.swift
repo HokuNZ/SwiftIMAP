@@ -73,6 +73,9 @@ final class IMAPClientFetchUIDVerificationTests: XCTestCase {
 
     /// Test that fetchMessageBody finds correct body among multiple responses
     func testFetchMessageBodyFindsCorrectBodyAmongMultipleResponses() async throws {
+        #if os(Linux)
+        try XCTSkipIf(true, "Tracked in #21: MockIMAPServer race causes greeting timeout on Linux")
+        #endif
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
         mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
