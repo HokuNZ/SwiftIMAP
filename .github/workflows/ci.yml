@@ -93,7 +93,7 @@ jobs:
       run: swift build -v
 
     - name: Run tests
-      run: swift test -v --skip GreenMailIntegrationTests
+      run: swift test -v
 
   greenmail-integration:
     runs-on: ubuntu-latest
