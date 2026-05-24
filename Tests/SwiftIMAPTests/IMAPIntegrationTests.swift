@@ -934,10 +934,11 @@ final class IMAPIntegrationTests: XCTestCase {
 
 // MARK: - Mock IMAP Server
 
-/// Mock IMAP server used by the in-process integration tests. All mutable state
-/// is read by both the test thread (set/asserted) and the NIO event loop
-/// (handler callbacks), so every access is serialised via `lock`. See #21 for
-/// the failure mode this fixes.
+/// Mock IMAP server used by the in-process integration tests. State touched by
+/// both the test thread (set/asserted) and the NIO event loop (handler
+/// callbacks) lives in the `_`-prefixed properties below, serialised via
+/// `lock`. `channel` is only touched from the test task (start/shutdown). See
+/// #21 for the failure mode this fixes.
 class MockIMAPServer {
     private let lock = NIOLock()
     private let eventLoopGroup: EventLoopGroup
@@ -952,11 +953,11 @@ class MockIMAPServer {
     private var _receivedContinuations: [String] = []
 
     var receivedCommands: [String] {
-        lock.withLock { _receivedCommands }
+        lock.withLock { Array(_receivedCommands) }
     }
 
     var receivedContinuations: [String] {
-        lock.withLock { _receivedContinuations }
+        lock.withLock { Array(_receivedContinuations) }
     }
 
     var isAwaitingContinuation: Bool {
