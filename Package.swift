@@ -48,7 +48,10 @@ let package = Package(
         ),
         .testTarget(
             name: "SwiftIMAPTests",
-            dependencies: ["SwiftIMAP"]
+            dependencies: [
+                "SwiftIMAP",
+                .product(name: "NIOEmbedded", package: "swift-nio")
+            ]
         )
     ]
 )
