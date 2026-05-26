@@ -34,6 +34,7 @@ let package = Package(
             dependencies: [
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "MimeParser", package: "MimeParser")
@@ -50,7 +51,8 @@ let package = Package(
             name: "SwiftIMAPTests",
             dependencies: [
                 "SwiftIMAP",
-                .product(name: "NIOEmbedded", package: "swift-nio")
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio")
             ]
         )
     ]

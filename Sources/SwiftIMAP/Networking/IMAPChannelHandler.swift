@@ -53,29 +53,30 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
         dispatch(.failure(IMAPError.disconnected))
     }
 
+    // The handler is invoked while `lock` is held so that a buffer drain and a
+    // concurrent live `dispatch` cannot deliver out of order or run the handler
+    // on two threads at once. Handlers must therefore not synchronously re-enter
+    // `setResponseHandler`/`dispatch` (NIOLock is non-reentrant); the connect
+    // path's handlers only spawn a Task / resume a continuation, so they don't.
     func setResponseHandler(_ handler: ((Result<[IMAPResponse], Error>) -> Void)?) {
-        let drained: [Result<[IMAPResponse], Error>] = lock.withLock {
+        lock.withLock {
             _responseHandler = handler
-            guard handler != nil else { return [] }
-            let pending = _pendingResults
+            guard let handler else { return }
+            for result in _pendingResults {
+                handler(result)
+            }
             _pendingResults.removeAll()
-            return pending
-        }
-        guard let handler else { return }
-        for result in drained {
-            handler(result)
         }
     }
 
     private func dispatch(_ result: Result<[IMAPResponse], Error>) {
-        let handler: ((Result<[IMAPResponse], Error>) -> Void)? = lock.withLock {
+        lock.withLock {
             if let handler = _responseHandler {
-                return handler
+                handler(result)
+            } else {
+                _pendingResults.append(result)
             }
-            _pendingResults.append(result)
-            return nil
         }
-        handler?(result)
     }
 }
 
