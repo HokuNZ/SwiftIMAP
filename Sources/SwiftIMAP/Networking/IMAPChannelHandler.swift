@@ -1,53 +1,82 @@
 import Foundation
 import NIOCore
+import NIOConcurrencyHelpers
 import NIOPosix
 
+/// Inbound IMAP response handler. Buffers parsed responses (and parse/IO
+/// errors) when no `responseHandler` is registered, so the greeting is not
+/// lost in the race between `bootstrap.connect()` resolving and the consumer
+/// installing a handler via `setResponseHandler`. See #21.
 final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
-    
+
     private let parser = IMAPParser()
-    private var responseHandler: ((Result<[IMAPResponse], Error>) -> Void)?
+    private let lock = NIOLock()
+    private var _responseHandler: ((Result<[IMAPResponse], Error>) -> Void)?
+    private var _pendingResults: [Result<[IMAPResponse], Error>] = []
     private let logger: Logger
-    
+
     init(logger: Logger) {
         self.logger = logger
     }
-    
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var buffer = unwrapInboundIn(data)
         let bytes = buffer.readBytes(length: buffer.readableBytes) ?? []
         let data = Data(bytes)
-        
+
         logger.log(level: .trace, "Received \(data.count) bytes")
-        
+
         parser.append(data)
-        
+
         do {
             let responses = try parser.parseResponses()
             if !responses.isEmpty {
                 logger.log(level: .debug, "Parsed \(responses.count) responses")
-                responseHandler?(.success(responses))
+                dispatch(.success(responses))
             }
         } catch {
             logger.log(level: .error, "Parse error: \(error)")
-            responseHandler?(.failure(error))
+            dispatch(.failure(error))
         }
     }
-    
+
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         logger.log(level: .error, "Channel error: \(error)")
-        responseHandler?(.failure(error))
+        dispatch(.failure(error))
         context.close(promise: nil)
     }
-    
+
     func channelInactive(context: ChannelHandlerContext) {
         logger.log(level: .info, "Channel became inactive")
-        responseHandler?(.failure(IMAPError.disconnected))
+        dispatch(.failure(IMAPError.disconnected))
     }
-    
+
+    // The handler is invoked while `lock` is held so that a buffer drain and a
+    // concurrent live `dispatch` cannot deliver out of order or run the handler
+    // on two threads at once. Handlers must therefore not synchronously re-enter
+    // `setResponseHandler`/`dispatch` (NIOLock is non-reentrant); the connect
+    // path's handlers only spawn a Task / resume a continuation, so they don't.
     func setResponseHandler(_ handler: ((Result<[IMAPResponse], Error>) -> Void)?) {
-        self.responseHandler = handler
+        lock.withLock {
+            _responseHandler = handler
+            guard let handler else { return }
+            for result in _pendingResults {
+                handler(result)
+            }
+            _pendingResults.removeAll()
+        }
+    }
+
+    private func dispatch(_ result: Result<[IMAPResponse], Error>) {
+        lock.withLock {
+            if let handler = _responseHandler {
+                handler(result)
+            } else {
+                _pendingResults.append(result)
+            }
+        }
     }
 }
 

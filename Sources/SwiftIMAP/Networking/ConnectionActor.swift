@@ -122,7 +122,9 @@ actor ConnectionActor {
             let channelHandler = IMAPChannelHandler(logger: logger)
             self.channelHandler = channelHandler
             
-            // Don't set the response handler here - let waitForGreeting handle the first response
+            // No response handler installed yet — waitForGreeting will install one below.
+            // IMAPChannelHandler buffers any bytes that arrive in the meantime, so the
+            // greeting cannot be dropped if the server beats us to setResponseHandler (#21).
             
             let tlsConfig = self.tlsConfiguration
             let imapConfig = self.configuration
