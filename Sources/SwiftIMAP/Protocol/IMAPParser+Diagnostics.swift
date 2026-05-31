@@ -8,7 +8,8 @@ extension StringProtocol {
     /// fragments). Capping the length stops unbounded content from leaking into
     /// logs or crash reporters while keeping enough context to diagnose the parse.
     func truncatedForDiagnostics(limit: Int = 200) -> String {
-        guard count > limit else { return String(self) }
-        return "\(prefix(limit))… (\(count) chars total, truncated)"
+        let total = count
+        guard total > limit else { return String(self) }
+        return "\(prefix(limit))… (\(total) chars total, truncated)"
     }
 }
