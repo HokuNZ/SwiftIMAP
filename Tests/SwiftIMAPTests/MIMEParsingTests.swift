@@ -214,6 +214,44 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertNotNil(parsed?.firstPart(withContentType: "image/jpeg"))
     }
     
+    func testStaticParseMimeContentNeedsNoInstance() throws {
+        let messageData = """
+        From: sender@example.com
+        To: recipient@example.com
+        Subject: Static Parse
+        Content-Type: text/plain; charset=utf-8
+
+        Parsed without a MessageSummary instance.
+        """.data(using: .utf8)!
+
+        // No stub instance required.
+        let parsed = try MessageSummary.parseMimeContent(from: messageData)
+
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed?.plainTextContent, "Parsed without a MessageSummary instance.")
+    }
+
+    func testInstanceParseMimeContentMatchesStatic() throws {
+        let messageData = """
+        From: sender@example.com
+        Subject: Parity
+        Content-Type: text/plain; charset=utf-8
+
+        Body.
+        """.data(using: .utf8)!
+
+        let viaInstance = try createTestSummary().parseMimeContent(from: messageData)
+        let viaStatic = try MessageSummary.parseMimeContent(from: messageData)
+
+        XCTAssertEqual(viaInstance?.plainTextContent, viaStatic?.plainTextContent)
+        XCTAssertEqual(viaInstance?.parts.count, viaStatic?.parts.count)
+    }
+
+    func testStaticParseMimeContentThrowsOnInvalidUTF8() {
+        let invalid = Data([0xFF, 0xFE, 0xFD])
+        XCTAssertThrowsError(try MessageSummary.parseMimeContent(from: invalid))
+    }
+
     // Helper to create a test message summary
     private func createTestSummary() -> MessageSummary {
         MessageSummary(

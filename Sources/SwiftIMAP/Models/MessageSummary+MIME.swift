@@ -2,18 +2,30 @@ import Foundation
 import MimeParser
 
 extension MessageSummary {
-    /// Parse MIME content from the given body data
-    public func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
+    /// Parse MIME content from raw RFC 822 body data.
+    ///
+    /// Reads no instance state, so callers with raw bytes but no populated
+    /// `MessageSummary` (e.g. an `.eml` fixture harness) can parse without
+    /// synthesising a stub instance.
+    public static func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
         // Convert Data to String for MimeParser
         guard let bodyString = String(data: bodyData, encoding: .utf8) else {
             throw IMAPError.parsingError("Failed to decode body data as UTF-8")
         }
-        
+
         // Parse the MIME content
         let parser = MimeParser()
         let mime = try parser.parse(bodyString)
-        
+
         return ParsedMimeMessage(from: mime)
+    }
+
+    /// Parse MIME content from the given body data.
+    ///
+    /// Convenience wrapper over the static `parseMimeContent(from:)` for callers
+    /// that already hold a `MessageSummary`. No instance state is used.
+    public func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
+        try MessageSummary.parseMimeContent(from: bodyData)
     }
 }
 

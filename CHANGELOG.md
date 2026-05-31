@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `MessageSummary.parseMimeContent(from:)` is now available as a `static` method, so callers with raw RFC 822 bytes but no populated `MessageSummary` (e.g. an `.eml` fixture harness) can parse without synthesising a stub instance (#22). The existing instance method is retained as a thin wrapper; both reach the same code path.
 - `MessageSummary.keywords: Set<String>` surfaces custom IMAP keywords the server reports that are not standard system flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords like `@Triaged` (#23). Previously these were silently dropped because `flags` is a closed `Flag` enum. Purely additive: `flags` behaviour is unchanged and the new init parameter defaults to `[]`.
 
 ## [1.2.4] - 2026-05-24
