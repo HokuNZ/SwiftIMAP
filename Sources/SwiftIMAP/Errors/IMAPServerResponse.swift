@@ -51,8 +51,11 @@ public struct IMAPServerResponse: Sendable, Equatable {
     }
 
     /// A reconstructed server response line suitable for logging, e.g.
-    /// `NO [TRYCREATE] Mailbox does not exist`. Safe to forward to crash reporters:
-    /// it contains only the status, response code, and the server's own text.
+    /// `NO [TRYCREATE] Mailbox does not exist`. Contains only the status, response
+    /// code, and the server's own text — never command arguments, credentials, or
+    /// message data. Note that `text` is server-supplied and some servers echo
+    /// mailbox names or usernames, so treat it as potentially user-specific before
+    /// exporting to third parties.
     public var line: String {
         var parts = [status.rawValue]
         if let code {

@@ -286,6 +286,17 @@ actor ConnectionActor {
         return String(format: "A%04d", commandTag)
     }
 
+    /// Convert a timeout in seconds to nanoseconds, clamped to a non-negative,
+    /// finite value. A misconfigured (negative, NaN, or oversized) timeout from
+    /// the public API would otherwise trap the `UInt64` conversion; here a
+    /// non-positive or non-finite value yields 0, i.e. an immediate, deterministic
+    /// timeout rather than a crash.
+    private static func nanoseconds(fromSeconds seconds: TimeInterval) -> UInt64 {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        let nanos = seconds * 1_000_000_000
+        return nanos >= Double(UInt64.max) ? UInt64.max : UInt64(nanos)
+    }
+
     private func mapSessionState() -> IMAPSessionState {
         switch connectionState {
         case .connected:
@@ -348,7 +359,7 @@ actor ConnectionActor {
                 pendingContinuationTag = command.tag
             }
             
-            let timeoutNanoseconds = UInt64(configuration.commandTimeout * 1_000_000_000)
+            let timeoutNanoseconds = ConnectionActor.nanoseconds(fromSeconds: configuration.commandTimeout)
             let timeoutTask = Task { [commandTag = command.tag] in
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 await self.handleTimeout(for: commandTag)
@@ -467,7 +478,7 @@ actor ConnectionActor {
             let resumedState = MutableState(value: false)
             let greetingState = MutableState(value: false)
             
-            let greetingTimeout = UInt64(configuration.connectionTimeout * 1_000_000_000)
+            let greetingTimeout = ConnectionActor.nanoseconds(fromSeconds: configuration.connectionTimeout)
             let timeoutTask = Task {
                 try await Task.sleep(nanoseconds: greetingTimeout)
                 if resumedState.compareAndExchange(expected: false, new: true) {
