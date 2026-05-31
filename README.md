@@ -215,6 +215,45 @@ let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("P
 // Labels map to IMAP keywords (Gmail's X-GM-LABELS extension is not implemented)
 ```
 
+### Error Handling
+
+All operations throw `IMAPError`. When the server rejects a command, `commandFailed`
+carries a structured `IMAPServerResponse` so you can log a faithful server response
+line and distinguish causes. None of the error output includes credentials or message
+data.
+
+```swift
+do {
+    try await client.moveMessage(uid: 12345, from: "INBOX", to: "Archive")
+} catch let error as IMAPError {
+    switch error {
+    case .commandFailed(let response):
+        // response.status  -> .no / .bad
+        // response.code    -> e.g. .tryCreate, .other("OVERQUOTA", nil)
+        // response.line    -> "NO [TRYCREATE] Mailbox does not exist" (safe to log)
+        log.error("\(response.commandName) failed: \(response.line)")
+        if response.isMailboxNotFound { /* destination renamed or removed */ }
+        if response.isOverQuota { /* account over quota */ }
+    case .connectionClosed(let response):
+        // A server BYE, e.g. "BYE [ALERT] Too many connections"
+        log.error("Connection closed: \(response?.line ?? "unexpected")")
+    case .timeout(let command):
+        log.error("Timed out: \(command ?? "connection")")
+    case .connectionFailed(_, let underlying):
+        // The typed transport cause (NIO/SSL error) is preserved for inspection
+        log.error("Connect failed: \(underlying.map(String.init(describing:)) ?? "unknown")")
+    default:
+        log.error("\(error.localizedDescription)")
+    }
+}
+```
+
+> **Migrating from 1.x:** `IMAPError` changed shape in 2.0. `commandFailed` now carries
+> an `IMAPServerResponse` (was `command`/`response` strings); `connectionClosed`,
+> `connectionFailed`, `tlsError`, and `timeout` gained associated values; and the
+> never-thrown cases `mailboxNotFound`, `messageNotFound`, `quotaExceeded`, and
+> `permissionDenied` were removed (use `IMAPServerResponse`'s accessors instead).
+
 ## Testing
 
 Run the test suite:

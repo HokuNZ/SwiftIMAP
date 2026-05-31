@@ -52,7 +52,7 @@ final class RetryHandlerTests: XCTestCase {
         let result: String = try await handler.execute(operation: "timeout") {
             let count = await attempts.increment()
             if count == 1 {
-                throw IMAPError.timeout
+                throw IMAPError.timeout(command: nil)
             }
             return "ok"
         }
@@ -77,6 +77,71 @@ final class RetryHandlerTests: XCTestCase {
         XCTAssertEqual(result, "ok")
         let attemptCount = await attempts.get()
         XCTAssertEqual(attemptCount, 2)
+    }
+
+    func testExecuteRetriesOnConnectionFailed() async throws {
+        // connect() failures surface as connectionFailed; these must be retryable
+        // (previously they fell through to non-retryable, making retries a no-op).
+        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.connectionLost])
+        let attempts = Counter()
+
+        let result: String = try await handler.execute(operation: "connect") {
+            let count = await attempts.increment()
+            if count == 1 {
+                throw IMAPError.connectionFailed("refused", underlying: nil)
+            }
+            return "ok"
+        }
+
+        XCTAssertEqual(result, "ok")
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 2)
+    }
+
+    func testExecuteRetriesOnTransientCommandFailure() async throws {
+        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.temporaryFailure])
+        let attempts = Counter()
+        let transient = IMAPServerResponse(
+            status: .no,
+            code: .other("UNAVAILABLE", nil),
+            text: "Server busy, try again",
+            commandName: "UID MOVE"
+        )
+
+        let result: String = try await handler.execute(operation: "transient") {
+            let count = await attempts.increment()
+            if count == 1 {
+                throw IMAPError.commandFailed(transient)
+            }
+            return "ok"
+        }
+
+        XCTAssertEqual(result, "ok")
+        let attemptCount = await attempts.get()
+        XCTAssertEqual(attemptCount, 2)
+    }
+
+    func testExecuteDoesNotRetryPermanentCommandFailure() async {
+        // A NO [NONEXISTENT] is permanent; a BAD is a client bug. Neither retries.
+        let handler = makeHandler(maxAttempts: 3, retryableErrors: [.temporaryFailure])
+        let attempts = Counter()
+        let permanent = IMAPServerResponse(
+            status: .no,
+            code: .other("NONEXISTENT", nil),
+            text: "Mailbox does not exist",
+            commandName: "UID MOVE"
+        )
+
+        do {
+            _ = try await handler.execute(operation: "permanent") {
+                _ = await attempts.increment()
+                throw IMAPError.commandFailed(permanent)
+            }
+            XCTFail("Expected permanent failure to propagate")
+        } catch {
+            let attemptCount = await attempts.get()
+            XCTAssertEqual(attemptCount, 1, "Permanent command failure must not be retried")
+        }
     }
 
     func testExecuteRetriesOnNetworkError() async throws {
@@ -129,7 +194,7 @@ final class RetryHandlerTests: XCTestCase {
             work: {
                 let count = await attempts.increment()
                 if count == 1 {
-                    throw IMAPError.connectionClosed
+                    throw IMAPError.connectionClosed(nil)
                 }
                 return "ok"
             }
@@ -153,7 +218,7 @@ final class RetryHandlerTests: XCTestCase {
             work: {
                 let count = await attempts.increment()
                 if count == 1 {
-                    throw IMAPError.timeout
+                    throw IMAPError.timeout(command: nil)
                 }
                 return "ok"
             }
@@ -166,23 +231,23 @@ final class RetryHandlerTests: XCTestCase {
 
     func testErrorDescriptionsCoverAllCases() {
         let cases: [(IMAPError, String)] = [
-            (.connectionFailed("oops"), "Connection failed: oops"),
+            (.connectionFailed("oops", underlying: nil), "Connection failed: oops"),
             (.connectionError("down"), "Connection error: down"),
-            (.connectionClosed, "Connection closed unexpectedly"),
+            (.connectionClosed(nil), "Connection closed unexpectedly"),
+            (.connectionClosed(IMAPServerResponse(status: .bye, code: .alert, text: "Too many connections", commandName: "CONNECT")),
+             "Connection closed by server: BYE [ALERT] Too many connections"),
             (.authenticationFailed("bad"), "Authentication failed: bad"),
-            (.tlsError("nope"), "TLS error: nope"),
+            (.tlsError("nope", underlying: nil), "TLS error: nope"),
             (.protocolError("bad"), "Protocol error: bad"),
             (.parsingError("bad"), "Parsing error: bad"),
-            (.commandFailed(command: "LOGIN", response: "NO"), "Command 'LOGIN' failed: NO"),
+            (.commandFailed(IMAPServerResponse(status: .no, code: .tryCreate, text: "Mailbox does not exist", commandName: "UID MOVE")),
+             "Command 'UID MOVE' failed: NO [TRYCREATE] Mailbox does not exist"),
             (.serverError("BUSY"), "Server error: BUSY"),
-            (.timeout, "Operation timed out"),
+            (.timeout(command: nil), "Operation timed out"),
+            (.timeout(command: "UID MOVE"), "Operation 'UID MOVE' timed out"),
             (.disconnected, "Connection disconnected"),
             (.invalidState("state"), "Invalid state: state"),
             (.unsupportedCapability("ID"), "Unsupported capability: ID"),
-            (.mailboxNotFound("INBOX"), "Mailbox not found: INBOX"),
-            (.messageNotFound(uid: 42), "Message not found: UID 42"),
-            (.quotaExceeded, "Quota exceeded"),
-            (.permissionDenied, "Permission denied"),
             (.invalidArgument("bad"), "Invalid argument: bad")
         ]
 
@@ -193,9 +258,10 @@ final class RetryHandlerTests: XCTestCase {
 
     func testRequiresReconnectionFlagsConnectionErrors() {
         XCTAssertTrue(IMAPError.connectionError("down").requiresReconnection)
-        XCTAssertTrue(IMAPError.connectionClosed.requiresReconnection)
+        XCTAssertTrue(IMAPError.connectionClosed(nil).requiresReconnection)
+        XCTAssertTrue(IMAPError.connectionFailed("refused", underlying: nil).requiresReconnection)
         XCTAssertTrue(IMAPError.serverError("BYE server closed").requiresReconnection)
         XCTAssertFalse(IMAPError.serverError("oops").requiresReconnection)
-        XCTAssertFalse(IMAPError.timeout.requiresReconnection)
+        XCTAssertFalse(IMAPError.timeout(command: nil).requiresReconnection)
     }
 }

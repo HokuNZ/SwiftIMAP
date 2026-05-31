@@ -89,8 +89,24 @@ struct BasicUsageExample {
             await client.disconnect()
             print("✓ Disconnected successfully!")
             
+        } catch let error as IMAPError {
+            // When the server rejects a command, `commandFailed` carries a structured
+            // `IMAPServerResponse`: the NO/BAD status, the response code, the server's
+            // text, and a reconstructed line safe to log. None of it includes
+            // credentials or message data.
+            if case .commandFailed(let response) = error {
+                print("❌ Server rejected \(response.commandName): \(response.line)")
+                if response.isMailboxNotFound {
+                    print("   The destination mailbox does not exist.")
+                } else if response.isOverQuota {
+                    print("   The account is over quota.")
+                }
+            } else {
+                print("❌ Error: \(error.localizedDescription)")
+            }
+            await client.disconnect()
         } catch {
-            print("❌ Error: \(error)")
+            print("❌ Error: \(error.localizedDescription)")
             await client.disconnect()
         }
     }

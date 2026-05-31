@@ -129,7 +129,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
 
     func testByeGreetingClosesConnection() async {
-        mockServer.setResponse(for: "GREETING", response: "* BYE Server shutting down")
+        mockServer.setResponse(for: "GREETING", response: "* BYE [ALERT] Server shutting down")
 
         let config = IMAPConfiguration(
             hostname: "localhost",
@@ -145,9 +145,13 @@ final class IMAPIntegrationTests: XCTestCase {
             try await client.connect()
             XCTFail("Expected BYE greeting to close connection")
         } catch {
-            guard case IMAPError.connectionClosed = error else {
-                return XCTFail("Expected connectionClosed error")
+            guard case IMAPError.connectionClosed(let response) = error else {
+                return XCTFail("Expected connectionClosed error, got: \(error)")
             }
+            XCTAssertEqual(response?.status, .bye)
+            XCTAssertEqual(response?.code, .alert)
+            XCTAssertEqual(response?.text, "Server shutting down")
+            XCTAssertEqual(response?.line, "BYE [ALERT] Server shutting down")
         }
 
         await client.disconnect()
@@ -350,7 +354,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
     
     // MARK: - Connection Tests
-    
+
     func testConnectionTimeout() async throws {
         // Create a client that connects to a non-existent server
         let config = IMAPConfiguration(

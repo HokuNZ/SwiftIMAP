@@ -30,8 +30,14 @@ extension IMAPClient {
                 return false
             }()
 
-            if case .untagged(.status(.bye(_, _))) = greeting {
-                throw IMAPError.connectionClosed
+            if case .untagged(.status(.bye(let code, let text))) = greeting {
+                let response = IMAPServerResponse(
+                    status: .bye,
+                    code: code,
+                    text: text,
+                    commandName: "CONNECT"
+                )
+                throw IMAPError.connectionClosed(response)
             }
 
             let capabilities = try await self.capability()

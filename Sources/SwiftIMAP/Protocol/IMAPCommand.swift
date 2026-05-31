@@ -38,8 +38,43 @@ public struct IMAPCommand: Sendable {
         case uid(UIDCommand)
         case idle
         case done
+
+        /// The IMAP command verb, without arguments. Safe to log or surface in
+        /// errors: never contains credentials, mailbox names, or message data.
+        public var label: String {
+            switch self {
+            case .capability: return "CAPABILITY"
+            case .noop: return "NOOP"
+            case .logout: return "LOGOUT"
+            case .starttls: return "STARTTLS"
+            case .authenticate: return "AUTHENTICATE"
+            case .login: return "LOGIN"
+            case .select: return "SELECT"
+            case .examine: return "EXAMINE"
+            case .create: return "CREATE"
+            case .delete: return "DELETE"
+            case .rename: return "RENAME"
+            case .subscribe: return "SUBSCRIBE"
+            case .unsubscribe: return "UNSUBSCRIBE"
+            case .list: return "LIST"
+            case .lsub: return "LSUB"
+            case .status: return "STATUS"
+            case .append: return "APPEND"
+            case .check: return "CHECK"
+            case .close: return "CLOSE"
+            case .expunge: return "EXPUNGE"
+            case .search: return "SEARCH"
+            case .fetch: return "FETCH"
+            case .store: return "STORE"
+            case .copy: return "COPY"
+            case .move: return "MOVE"
+            case .uid(let command): return "UID \(command.label)"
+            case .idle: return "IDLE"
+            case .done: return "DONE"
+            }
+        }
     }
-    
+
     public enum StatusItem: String, Sendable {
         case messages = "MESSAGES"
         case recent = "RECENT"
@@ -136,6 +171,18 @@ public struct IMAPCommand: Sendable {
         case search(charset: String?, criteria: SearchCriteria)
         case store(sequence: SequenceSet, flags: StoreFlags, silent: Bool)
         case expunge(sequence: SequenceSet)
+
+        /// The UID sub-command verb, without arguments.
+        public var label: String {
+            switch self {
+            case .copy: return "COPY"
+            case .move: return "MOVE"
+            case .fetch: return "FETCH"
+            case .search: return "SEARCH"
+            case .store: return "STORE"
+            case .expunge: return "EXPUNGE"
+            }
+        }
     }
     
     public enum SequenceSet: Sendable {
