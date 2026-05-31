@@ -22,8 +22,8 @@ extension MessageSummary {
 
     /// Parse MIME content from the given body data.
     ///
-    /// Convenience wrapper over ``parseMimeContent(from:)-swift.type.method`` for
-    /// callers that already hold a `MessageSummary`. No instance state is used.
+    /// Convenience wrapper over the static `parseMimeContent(from:)` for callers
+    /// that already hold a `MessageSummary`. No instance state is used.
     public func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
         try MessageSummary.parseMimeContent(from: bodyData)
     }
