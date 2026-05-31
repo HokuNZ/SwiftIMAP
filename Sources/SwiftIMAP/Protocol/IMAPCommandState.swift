@@ -18,14 +18,14 @@ struct IMAPCommandStateValidator {
         case .check, .close, .expunge, .search, .fetch, .store, .copy, .move, .uid, .idle, .done:
             try requireSelected(state, command: command)
             if isReadOnly(state), requiresWriteAccess(command) {
-                throw IMAPError.invalidState("\(command) not permitted in read-only mailbox")
+                throw IMAPError.invalidState("\(command.label) not permitted in read-only mailbox")
             }
         }
     }
 
     private static func requireNotAuthenticated(_ state: IMAPSessionState, command: IMAPCommand.Command) throws {
         guard case .notAuthenticated = state else {
-            throw IMAPError.invalidState("\(command) only permitted before authentication")
+            throw IMAPError.invalidState("\(command.label) only permitted before authentication")
         }
     }
 
@@ -34,13 +34,13 @@ struct IMAPCommandStateValidator {
         case .authenticated, .selected:
             return
         case .notAuthenticated:
-            throw IMAPError.invalidState("\(command) requires authenticated state")
+            throw IMAPError.invalidState("\(command.label) requires authenticated state")
         }
     }
 
     private static func requireSelected(_ state: IMAPSessionState, command: IMAPCommand.Command) throws {
         guard case .selected = state else {
-            throw IMAPError.invalidState("\(command) requires selected state")
+            throw IMAPError.invalidState("\(command.label) requires selected state")
         }
     }
 

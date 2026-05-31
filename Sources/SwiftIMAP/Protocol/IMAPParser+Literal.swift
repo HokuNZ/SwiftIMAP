@@ -50,7 +50,7 @@ extension IMAPParser {
             let attributes = try parseFetchAttributesWithLiteral(fetchData, literalData: literalData)
             return .untagged(.fetch(number, attributes))
         } else {
-            throw IMAPError.parsingError("Unexpected numeric response with literal: \(command)")
+            throw IMAPError.parsingError("Unexpected numeric response with literal: \(command.truncatedForDiagnostics())")
         }
     }
 
@@ -71,7 +71,7 @@ extension IMAPParser {
             let attributes = try parseFetchAttributesWithMultipleLiterals(fetchData, literalDataArray: literalDataArray)
             return .untagged(.fetch(number, attributes))
         } else {
-            throw IMAPError.parsingError("Unexpected numeric response with multiple literals: \(command)")
+            throw IMAPError.parsingError("Unexpected numeric response with multiple literals: \(command.truncatedForDiagnostics())")
         }
     }
 

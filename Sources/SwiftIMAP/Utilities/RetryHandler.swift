@@ -120,15 +120,20 @@ actor RetryHandler {
         // Check for specific IMAP errors
         if let imapError = error as? IMAPError {
             switch imapError {
-            case .connectionError, .connectionClosed:
+            case .connectionError, .connectionClosed, .connectionFailed:
                 return configuration.retryableErrors.contains(.connectionLost)
             case .timeout:
                 return configuration.retryableErrors.contains(.timeout)
             case .serverError(let message):
-                // Check for temporary server errors
-                let temporaryErrors = ["UNAVAILABLE", "TRY AGAIN", "TEMPORARY", "BUSY"]
-                let isTemporary = temporaryErrors.contains { message.uppercased().contains($0) }
-                return isTemporary && configuration.retryableErrors.contains(.temporaryFailure)
+                return RetryHandler.isTransientText(message)
+                    && configuration.retryableErrors.contains(.temporaryFailure)
+            case .commandFailed(let response):
+                // Only NO completions can be transient; BAD is a client bug and BYE
+                // is terminal. Classify on the typed response code where present,
+                // falling back to the server's text for servers that omit codes.
+                guard response.status == .no else { return false }
+                return RetryHandler.isTransientServerResponse(response)
+                    && configuration.retryableErrors.contains(.temporaryFailure)
             default:
                 return false
             }
@@ -150,6 +155,30 @@ actor RetryHandler {
         
         return false
     }
+
+    /// Whether free-form server text names a transient condition.
+    private static func isTransientText(_ text: String) -> Bool {
+        let transient = ["UNAVAILABLE", "TRY AGAIN", "TEMPORARY", "BUSY"]
+        let upper = text.uppercased()
+        return transient.contains { upper.contains($0) }
+    }
+
+    /// Whether a `NO` server response indicates a transient, retryable condition.
+    /// Prefers the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`),
+    /// and falls back to the response text for servers that omit a code.
+    private static func isTransientServerResponse(_ response: IMAPServerResponse) -> Bool {
+        // UNAVAILABLE, INUSE, and SERVERBUG are RFC 5530 codes with no typed case in
+        // IMAPResponse.ResponseCode, so they always arrive as `.other`. If a named
+        // case is ever added for one of these, add it to this check too.
+        let transientCodes: Set<String> = ["UNAVAILABLE", "INUSE", "SERVERBUG"]
+        if case .other(let name, _) = response.code, transientCodes.contains(name.uppercased()) {
+            return true
+        }
+        if let text = response.text {
+            return isTransientText(text)
+        }
+        return false
+    }
 }
 
 // MARK: - Error Classification
@@ -158,7 +187,7 @@ extension IMAPError {
     /// Determines if the error indicates a lost connection that requires reconnection
     var requiresReconnection: Bool {
         switch self {
-        case .connectionError, .connectionClosed:
+        case .connectionError, .connectionClosed, .connectionFailed:
             return true
         case .serverError(let message):
             // Some server errors indicate connection issues

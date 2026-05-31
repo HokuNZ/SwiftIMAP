@@ -167,10 +167,17 @@ actor ConnectionActor {
             }
             
             return greeting
+        } catch let error as IMAPError {
+            // Preserve typed IMAP errors (e.g. timeout(command:), connectionClosed)
+            // rather than flattening them into connectionFailed — re-wrapping would
+            // bury the operation context and misclassify them for retry.
+            connectionState = .disconnected
+            await cleanup()
+            throw error
         } catch {
             connectionState = .disconnected
             await cleanup()
-            throw IMAPError.connectionFailed(error.localizedDescription)
+            throw IMAPError.connectionFailed(error.localizedDescription, underlying: error)
         }
     }
     
@@ -194,7 +201,7 @@ actor ConnectionActor {
             let sslHandler = try makeTLSHandler(hostname: configuration.hostname)
             try await channel.pipeline.addHandler(sslHandler, position: .first).get()
         } catch {
-            throw IMAPError.tlsError(error.localizedDescription)
+            throw IMAPError.tlsError(error.localizedDescription, underlying: error)
         }
     }
     
@@ -356,7 +363,7 @@ actor ConnectionActor {
             )
             pendingCommands[command.tag] = pending
 
-            logger.log(level: .debug, "Sending command \(command.tag): \(command.command)")
+            logger.log(level: .debug, "Sending command \(command.tag): \(command.command.label)")
 
             do {
                 try await channel.writeAndFlush(encoded.initialData)
@@ -411,12 +418,18 @@ actor ConnectionActor {
                     // Return all collected responses plus the tagged response
                     pending.responses.append(response)
                     pending.continuation.resume(returning: pending.responses)
-                case .no(_, let message), .bad(_, let message):
-                    let error = IMAPError.commandFailed(
-                        command: String(describing: pending.command.command),
-                        response: message ?? "Unknown error"
+                case .no(let code, let text), .bad(let code, let text):
+                    let serverStatus: IMAPServerResponse.Status = {
+                        if case .bad = status { return .bad }
+                        return .no
+                    }()
+                    let response = IMAPServerResponse(
+                        status: serverStatus,
+                        code: code,
+                        text: text,
+                        commandName: pending.command.command.label
                     )
-                    pending.continuation.resume(throwing: error)
+                    pending.continuation.resume(throwing: IMAPError.commandFailed(response))
                 default:
                     pending.responses.append(response)
                     pending.continuation.resume(returning: pending.responses)
@@ -454,10 +467,11 @@ actor ConnectionActor {
             let resumedState = MutableState(value: false)
             let greetingState = MutableState(value: false)
             
+            let greetingTimeout = UInt64(configuration.connectionTimeout * 1_000_000_000)
             let timeoutTask = Task {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try await Task.sleep(nanoseconds: greetingTimeout)
                 if resumedState.compareAndExchange(expected: false, new: true) {
-                    continuation.resume(throwing: IMAPError.timeout)
+                    continuation.resume(throwing: IMAPError.timeout(command: "CONNECT"))
                 }
             }
             
@@ -613,7 +627,7 @@ private extension ConnectionActor {
             if pendingContinuationTag == tag {
                 pendingContinuationTag = nil
             }
-            pending.continuation.resume(throwing: IMAPError.timeout)
+            pending.continuation.resume(throwing: IMAPError.timeout(command: pending.command.command.label))
         }
     }
 

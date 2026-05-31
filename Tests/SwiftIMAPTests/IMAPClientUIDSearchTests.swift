@@ -241,7 +241,7 @@ final class IMAPClientUIDSearchTests: XCTestCase {
             XCTFail("Expected error on server NO response")
         } catch {
             // Verify the error is propagated correctly
-            guard case IMAPError.commandFailed(_, _) = error else {
+            guard case IMAPError.commandFailed = error else {
                 XCTFail("Expected commandFailed error, got: \(error)")
                 return
             }

@@ -7,9 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- `IMAPError` no longer embeds command arguments in its messages, closing a credential/payload leak (#27). The `commandFailed` error previously built its command field with `String(describing:)`, so a rejected `LOGIN` produced an error (and `localizedDescription`) containing the cleartext password; `APPEND` embedded the whole message body. The debug log line for every outgoing command and the `invalidState` validator messages had the same leak. All now use a new argument-free `IMAPCommand.Command.label` (e.g. `"UID MOVE"`, `"LOGIN"`).
+- Parser errors now truncate the offending server input (`String.truncatedForDiagnostics`), so a malformed or oversized response line can no longer dump unbounded content (including message data) into logs or crash reports.
+
 ### Added
 - `MessageSummary.parseMimeContent(from:)` is now available as a `static` method, so callers with raw RFC 822 bytes but no populated `MessageSummary` (e.g. an `.eml` fixture harness) can parse without synthesising a stub instance (#22). The existing instance method is retained as a thin wrapper; both reach the same code path.
 - `MessageSummary.keywords: Set<String>` surfaces custom IMAP keywords the server reports that are not standard system flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords like `@Triaged` (#23). Previously these were silently dropped because `flags` is a closed `Flag` enum. Purely additive: `flags` behaviour is unchanged and the new init parameter defaults to `[]`.
+- `IMAPServerResponse` value type carrying the server's `status` (`NO`/`BAD`/`BYE`), parsed `code`, `text`, and the argument-free `commandName`, plus a reconstructed `line` for logging (e.g. `NO [TRYCREATE] Mailbox does not exist`) (#27). Surfaced on `commandFailed` and `connectionClosed` so callers (e.g. MailTriage #226) can log a faithful server response line and distinguish causes. Includes semantic accessors: `isMailboxNotFound`, `isOverQuota`, `isPermissionDenied`, `isAuthenticationFailure`, and `codeName`.
+- `IMAPCommand.Command.label` / `IMAPCommand.UIDCommand.label`: the argument-free IMAP verb, safe to log.
+
+### Changed
+- **Breaking.** `IMAPError` reshaped for richer, leak-free diagnostics (#27):
+  - `commandFailed(command:response:)` → `commandFailed(IMAPServerResponse)`.
+  - `connectionClosed` → `connectionClosed(IMAPServerResponse?)`, capturing the `BYE` greeting's code and text instead of discarding them.
+  - `connectionFailed(String)` → `connectionFailed(String, underlying: (any Error)?)` and `tlsError(String)` → `tlsError(String, underlying: (any Error)?)`, preserving the typed NIO/SSL cause.
+  - `timeout` → `timeout(command: String?)`, identifying which operation timed out.
+- The greeting wait now honours `IMAPConfiguration.connectionTimeout` instead of a hardcoded 5 seconds.
+- `connect()` failures (which surface as `connectionFailed`) are now retryable; previously the retry wrapper around `connect()` was a no-op for them. Retry classification of server rejections now branches on the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`) and never retries `BAD`.
+
+### Removed
+- **Breaking.** Dead `IMAPError` cases `mailboxNotFound`, `messageNotFound`, `quotaExceeded`, and `permissionDenied`, which had no producers (#27). The equivalent information is available uniformly via `IMAPServerResponse.code` and its semantic accessors.
 
 ## [1.2.4] - 2026-05-24
 
