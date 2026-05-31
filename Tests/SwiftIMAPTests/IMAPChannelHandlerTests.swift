@@ -107,6 +107,35 @@ final class IMAPChannelHandlerTests: XCTestCase {
         XCTAssertEqual(nextCount, 1, "Response after the one-shot fired must buffer for the next handler")
     }
 
+    /// A one-shot handler is cleared after a `.failure` batch too (not just
+    /// `.success`), so the next handler still drains a later buffered batch
+    /// rather than the failure being delivered twice or the one-shot lingering.
+    func testOneShotHandlerClearsAfterFailureBatch() throws {
+        let handler = makeHandler()
+        let channel = EmbeddedChannel(handler: handler)
+        defer { try? channel.finish() }
+
+        var oneShotResults: [Result<[IMAPResponse], Error>] = []
+        handler.setResponseHandler({ result in oneShotResults.append(result) }, oneShot: true)
+
+        // A malformed line makes the parser throw, which `channelRead` dispatches
+        // as a `.failure` batch.
+        try writeLine("A1 BOGUS", into: channel)
+        XCTAssertEqual(oneShotResults.count, 1)
+        if case .success = oneShotResults.first {
+            XCTFail("Expected a .failure batch")
+        }
+
+        // One-shot must have cleared, so a subsequent valid batch buffers for the
+        // next handler instead of hitting the spent one-shot closure.
+        try writeLine("* OK ready", into: channel)
+        var nextCount = 0
+        handler.setResponseHandler { result in
+            if case .success = result { nextCount += 1 }
+        }
+        XCTAssertEqual(nextCount, 1, "Batch after a one-shot failure must buffer for the next handler")
+    }
+
     /// A one-shot handler installed after responses were buffered consumes only
     /// the first buffered batch; the rest stays buffered for the next handler.
     func testOneShotHandlerDrainsOnlyFirstBufferedBatch() throws {
