@@ -14,6 +14,7 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     private let parser = IMAPParser()
     private let lock = NIOLock()
     private var _responseHandler: ((Result<[IMAPResponse], Error>) -> Void)?
+    private var _oneShot = false
     private var _pendingResults: [Result<[IMAPResponse], Error>] = []
     private let logger: Logger
 
@@ -58,14 +59,28 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     // on two threads at once. Handlers must therefore not synchronously re-enter
     // `setResponseHandler`/`dispatch` (NIOLock is non-reentrant); the connect
     // path's handlers only spawn a Task / resume a continuation, so they don't.
-    func setResponseHandler(_ handler: ((Result<[IMAPResponse], Error>) -> Void)?) {
+    //
+    // A `oneShot` handler is delivered exactly one result batch and then cleared
+    // (under the same lock, without re-entry) so the channel reverts to buffering.
+    // The greeting handler uses this so any response arriving between the greeting
+    // and the persistent handler being installed is buffered rather than dropped
+    // by a stale greeting closure (#26).
+    func setResponseHandler(_ handler: ((Result<[IMAPResponse], Error>) -> Void)?, oneShot: Bool = false) {
         lock.withLock {
             _responseHandler = handler
-            guard let handler else { return }
-            for result in _pendingResults {
-                handler(result)
+            _oneShot = oneShot
+            guard _responseHandler != nil else { return }
+            // Drain buffered results. A one-shot handler consumes only the first
+            // batch and then clears itself, leaving the remainder buffered for the
+            // next handler.
+            while !_pendingResults.isEmpty, let handler = _responseHandler {
+                handler(_pendingResults.removeFirst())
+                if _oneShot {
+                    _responseHandler = nil
+                    _oneShot = false
+                    break
+                }
             }
-            _pendingResults.removeAll()
         }
     }
 
@@ -73,6 +88,10 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
         lock.withLock {
             if let handler = _responseHandler {
                 handler(result)
+                if _oneShot {
+                    _responseHandler = nil
+                    _oneShot = false
+                }
             } else {
                 _pendingResults.append(result)
             }

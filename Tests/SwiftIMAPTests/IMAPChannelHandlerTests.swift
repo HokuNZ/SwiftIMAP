@@ -76,6 +76,61 @@ final class IMAPChannelHandlerTests: XCTestCase {
         XCTAssertEqual(secondHandlerCount, 0, "Second handler should not see the already-drained buffer")
     }
 
+    private func writeLine(_ line: String, into channel: EmbeddedChannel) throws {
+        var buffer = channel.allocator.buffer(capacity: 64)
+        buffer.writeString(line + "\r\n")
+        try channel.writeInbound(buffer)
+    }
+
+    /// A one-shot handler receives the first live batch and is then cleared, so
+    /// subsequent responses buffer for the next handler rather than hitting the
+    /// stale one-shot closure (#26).
+    func testOneShotHandlerConsumesFirstBatchThenBuffers() throws {
+        let handler = makeHandler()
+        let channel = EmbeddedChannel(handler: handler)
+        defer { try? channel.finish() }
+
+        var oneShotCount = 0
+        handler.setResponseHandler({ result in
+            if case .success = result { oneShotCount += 1 }
+        }, oneShot: true)
+
+        try writeLine("* OK greeting", into: channel)
+        try writeLine("* BYE later", into: channel)
+
+        XCTAssertEqual(oneShotCount, 1, "One-shot handler must see only the first batch")
+
+        var nextCount = 0
+        handler.setResponseHandler { result in
+            if case .success = result { nextCount += 1 }
+        }
+        XCTAssertEqual(nextCount, 1, "Response after the one-shot fired must buffer for the next handler")
+    }
+
+    /// A one-shot handler installed after responses were buffered consumes only
+    /// the first buffered batch; the rest stays buffered for the next handler.
+    func testOneShotHandlerDrainsOnlyFirstBufferedBatch() throws {
+        let handler = makeHandler()
+        let channel = EmbeddedChannel(handler: handler)
+        defer { try? channel.finish() }
+
+        // Two batches buffered before any handler is installed.
+        try writeLine("* OK greeting", into: channel)
+        try writeLine("* BYE later", into: channel)
+
+        var oneShotCount = 0
+        handler.setResponseHandler({ result in
+            if case .success = result { oneShotCount += 1 }
+        }, oneShot: true)
+        XCTAssertEqual(oneShotCount, 1, "One-shot must drain only the first buffered batch")
+
+        var nextCount = 0
+        handler.setResponseHandler { result in
+            if case .success = result { nextCount += 1 }
+        }
+        XCTAssertEqual(nextCount, 1, "Remaining buffered batch must go to the next handler")
+    }
+
     /// Setting the handler to nil clears it without losing future responses.
     func testClearingHandlerThenSettingNewOneBuffersInBetween() throws {
         let handler = makeHandler()

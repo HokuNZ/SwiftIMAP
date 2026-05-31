@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - **Breaking.** Dead `IMAPError` cases `mailboxNotFound`, `messageNotFound`, `quotaExceeded`, and `permissionDenied`, which had no producers (#27). The equivalent information is available uniformly via `IMAPServerResponse.code` and its semantic accessors.
 
+### Fixed
+- `ConnectionActor.waitForGreeting` no longer drops responses that arrive between the greeting and the persistent handler being installed (#26). The greeting handler is now a one-shot — it consumes the greeting batch and clears itself (inside the channel handler's lock, so no re-entrant deadlock), reverting the channel to buffering. The greeting closure's bare `resumedState` read was also replaced with a compare-and-exchange to remove a TOCTOU with the timeout task.
+
 ## [1.2.4] - 2026-05-24
 
 ### Fixed
