@@ -7,6 +7,7 @@ extension IMAPClient {
     ) throws -> MessageSummary {
         var uid: UID?
         var flags = Set<Flag>()
+        var keywords = Set<String>()
         var internalDate: Date?
         var size: UInt32?
         var envelope: Envelope?
@@ -18,6 +19,9 @@ extension IMAPClient {
                 uid = uidValue
             case .flags(let flagValues):
                 flags = Set(flagValues.compactMap { Flag(rawValue: $0) })
+                // Anything that is not a standard system flag is a custom keyword
+                // (e.g. $Forwarded, @Triaged) that the Flag enum would otherwise drop.
+                keywords = Set(flagValues.filter { Flag(rawValue: $0) == nil })
             case .internalDate(let date):
                 internalDate = date
             case .rfc822Size(let sizeValue):
@@ -44,6 +48,7 @@ extension IMAPClient {
             uid: uid,
             sequenceNumber: sequenceNumber,
             flags: flags,
+            keywords: keywords,
             internalDate: internalDate,
             size: size,
             envelope: envelope,

@@ -6,7 +6,13 @@ public typealias MessageSequenceNumber = UInt32
 public struct MessageSummary: Sendable {
     public let uid: UID
     public let sequenceNumber: MessageSequenceNumber
+    /// Standard system flags (`\Seen`, `\Answered`, etc.). Server keywords that
+    /// are not standard system flags are surfaced in ``keywords`` instead.
     public let flags: Set<Flag>
+    /// Custom IMAP keywords the server reported that are not standard system
+    /// flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords
+    /// such as `@Triaged`. Empty when the fetch reported no custom keywords.
+    public let keywords: Set<String>
     public let internalDate: Date
     public let size: UInt32
     public let envelope: Envelope?
@@ -19,6 +25,7 @@ public struct MessageSummary: Sendable {
         uid: UID,
         sequenceNumber: MessageSequenceNumber,
         flags: Set<Flag> = [],
+        keywords: Set<String> = [],
         internalDate: Date,
         size: UInt32,
         envelope: Envelope? = nil,
@@ -27,6 +34,7 @@ public struct MessageSummary: Sendable {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
         self.flags = flags
+        self.keywords = keywords
         self.internalDate = internalDate
         self.size = size
         self.envelope = envelope

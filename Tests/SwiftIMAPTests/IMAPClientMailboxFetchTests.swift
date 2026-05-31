@@ -209,6 +209,58 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testFetchMessageSurfacesCustomKeywords() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(
+            for: "UID FETCH",
+            response: "* 1 FETCH (UID 1 FLAGS (\\Answered $Forwarded @Triaged) " +
+                      "INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 4286)"
+        )
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summary = try await client.fetchMessage(
+            uid: 1,
+            in: "INBOX",
+            items: [.uid, .flags, .internalDate, .rfc822Size]
+        )
+
+        XCTAssertNotNil(summary)
+        // Standard system flags stay in `flags`; custom keywords are surfaced separately.
+        XCTAssertEqual(summary?.flags, [.answered])
+        XCTAssertEqual(summary?.keywords, ["$Forwarded", "@Triaged"])
+
+        await client.disconnect()
+    }
+
+    func testFetchMessageWithoutCustomKeywordsHasEmptyKeywords() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(
+            for: "UID FETCH",
+            response: "* 1 FETCH (UID 1 FLAGS (\\Seen) " +
+                      "INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 100)"
+        )
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summary = try await client.fetchMessage(
+            uid: 1,
+            in: "INBOX",
+            items: [.uid, .flags, .internalDate, .rfc822Size]
+        )
+
+        XCTAssertEqual(summary?.flags, [.seen])
+        XCTAssertTrue(summary?.keywords.isEmpty ?? false)
+
+        await client.disconnect()
+    }
+
     func testListMessagesThrowsWhenDisconnected() async {
         let client = makeClient()
 
