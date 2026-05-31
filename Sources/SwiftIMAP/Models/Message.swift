@@ -6,8 +6,7 @@ public typealias MessageSequenceNumber = UInt32
 public struct MessageSummary: Sendable {
     public let uid: UID
     public let sequenceNumber: MessageSequenceNumber
-    /// Standard system flags (`\Seen`, `\Answered`, etc.). Server keywords that
-    /// are not standard system flags are surfaced in ``keywords`` instead.
+    /// Standard system flags (`\Seen`, `\Answered`, etc.).
     public let flags: Set<Flag>
     /// Custom IMAP keywords the server reported that are not standard system
     /// flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords

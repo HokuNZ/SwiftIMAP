@@ -18,9 +18,8 @@ extension IMAPClient {
             case .uid(let uidValue):
                 uid = uidValue
             case .flags(let flagValues):
-                // Single pass: recognised system flags go to `flags`; anything else
-                // (e.g. $Forwarded, @Triaged) is a custom keyword the Flag enum would
-                // otherwise drop.
+                // A recognised system flag goes to `flags`; anything else
+                // (e.g. $Forwarded, @Triaged) is a custom keyword.
                 for value in flagValues {
                     if let flag = Flag(rawValue: value) {
                         flags.insert(flag)
