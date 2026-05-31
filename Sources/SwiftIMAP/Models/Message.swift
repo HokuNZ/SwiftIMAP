@@ -6,7 +6,11 @@ public typealias MessageSequenceNumber = UInt32
 public struct MessageSummary: Sendable {
     public let uid: UID
     public let sequenceNumber: MessageSequenceNumber
+    /// The standard RFC 3501 system flags (see `Flag`).
     public let flags: Set<Flag>
+    /// Custom IMAP keywords reported by the server, such as `$Forwarded`, `$Junk`,
+    /// or `@Triaged`: any flag value that is not a standard system `Flag`.
+    public let keywords: Set<String>
     public let internalDate: Date
     public let size: UInt32
     public let envelope: Envelope?
@@ -19,6 +23,7 @@ public struct MessageSummary: Sendable {
         uid: UID,
         sequenceNumber: MessageSequenceNumber,
         flags: Set<Flag> = [],
+        keywords: Set<String> = [],
         internalDate: Date,
         size: UInt32,
         envelope: Envelope? = nil,
@@ -27,6 +32,7 @@ public struct MessageSummary: Sendable {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
         self.flags = flags
+        self.keywords = keywords
         self.internalDate = internalDate
         self.size = size
         self.envelope = envelope
