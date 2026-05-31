@@ -9,8 +9,7 @@ public struct MessageSummary: Sendable {
     /// Standard system flags (`\Seen`, `\Answered`, etc.).
     public let flags: Set<Flag>
     /// Custom IMAP keywords reported by the server, such as `$Forwarded`, `$Junk`,
-    /// or `@Triaged`: any flag value that is not a standard system `Flag`. Empty if
-    /// the fetch returned none.
+    /// or `@Triaged`: any flag value that is not a standard system `Flag`.
     public let keywords: Set<String>
     public let internalDate: Date
     public let size: UInt32
