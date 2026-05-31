@@ -475,9 +475,10 @@ actor ConnectionActor {
     
     private func waitForGreeting() async throws -> IMAPResponse {
         return try await withCheckedThrowingContinuation { continuation in
+            // `resumedState` guarantees the continuation is resumed exactly once
+            // across the racing timeout task and the greeting handler.
             let resumedState = MutableState(value: false)
-            let greetingState = MutableState(value: false)
-            
+
             let greetingTimeout = ConnectionActor.nanoseconds(fromSeconds: configuration.connectionTimeout)
             let timeoutTask = Task {
                 try await Task.sleep(nanoseconds: greetingTimeout)
@@ -486,40 +487,37 @@ actor ConnectionActor {
                 }
             }
             
-            channelHandler?.setResponseHandler { [weak self] result in
-                guard !resumedState.value else { return }
-                
+            // One-shot: the handler is delivered the first response batch (the
+            // greeting) and then cleared, so any response arriving before the
+            // persistent handler is installed in connect() is buffered, not dropped.
+            channelHandler?.setResponseHandler({ [weak self] result in
                 switch result {
                 case .success(let responses):
-                    // Only handle the first set of responses as greeting
-                    if greetingState.compareAndExchange(expected: false, new: true) {
-                        if resumedState.compareAndExchange(expected: false, new: true) {
-                            timeoutTask.cancel()
-                            
-                            if let greeting = responses.first {
-                                // Process any CAPABILITY responses that came with the greeting
-                                Task { [weak self] in
-                                    for response in responses {
-                                        if case .untagged(.capability(let caps)) = response {
-                                            await self?.updateCapabilities(Set(caps))
-                                        } else if case .untagged(.status(let status)) = response {
-                                            await self?.updateCapabilitiesIfPresent(status)
-                                        }
-                                    }
+                    // CAS, not a bare read: the timeout task may have already won.
+                    guard resumedState.compareAndExchange(expected: false, new: true) else { return }
+                    timeoutTask.cancel()
+
+                    if let greeting = responses.first {
+                        // Process any CAPABILITY responses that came with the greeting
+                        Task { [weak self] in
+                            for response in responses {
+                                if case .untagged(.capability(let caps)) = response {
+                                    await self?.updateCapabilities(Set(caps))
+                                } else if case .untagged(.status(let status)) = response {
+                                    await self?.updateCapabilitiesIfPresent(status)
                                 }
-                                continuation.resume(returning: greeting)
-                            } else {
-                                continuation.resume(throwing: IMAPError.protocolError("No greeting received"))
                             }
                         }
+                        continuation.resume(returning: greeting)
+                    } else {
+                        continuation.resume(throwing: IMAPError.protocolError("No greeting received"))
                     }
                 case .failure(let error):
-                    if resumedState.compareAndExchange(expected: false, new: true) {
-                        timeoutTask.cancel()
-                        continuation.resume(throwing: error)
-                    }
+                    guard resumedState.compareAndExchange(expected: false, new: true) else { return }
+                    timeoutTask.cancel()
+                    continuation.resume(throwing: error)
                 }
-            }
+            }, oneShot: true)
         }
     }
     
