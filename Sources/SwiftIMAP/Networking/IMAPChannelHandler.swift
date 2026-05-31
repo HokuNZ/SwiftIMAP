@@ -56,15 +56,17 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
 
     // The handler is invoked while `lock` is held so that a buffer drain and a
     // concurrent live `dispatch` cannot deliver out of order or run the handler
-    // on two threads at once. Handlers must therefore not synchronously re-enter
-    // `setResponseHandler`/`dispatch` (NIOLock is non-reentrant); the connect
-    // path's handlers only spawn a Task / resume a continuation, so they don't.
+    // on two threads at once. Handlers must therefore NOT synchronously re-enter
+    // `setResponseHandler`/`dispatch` (NIOLock is non-reentrant) — a handler may
+    // only spawn a Task or resume a continuation. Both current callers (the
+    // greeting and persistent handlers in `connect()`) honour this.
     //
-    // A `oneShot` handler is delivered exactly one result batch and then cleared
-    // (under the same lock, without re-entry) so the channel reverts to buffering.
-    // The greeting handler uses this so any response arriving between the greeting
-    // and the persistent handler being installed is buffered rather than dropped
-    // by a stale greeting closure (#26).
+    // A `oneShot` handler is delivered exactly one result batch — one
+    // `Result<[IMAPResponse], Error>`, i.e. all responses parsed from a single
+    // read — and is then cleared (under the same lock, without re-entry) so the
+    // channel reverts to buffering. The greeting handler uses this so any response
+    // arriving between the greeting and the persistent handler being installed is
+    // buffered rather than dropped by a stale greeting closure (#26).
     func setResponseHandler(_ handler: ((Result<[IMAPResponse], Error>) -> Void)?, oneShot: Bool = false) {
         lock.withLock {
             _responseHandler = handler
