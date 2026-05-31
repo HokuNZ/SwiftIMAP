@@ -18,10 +18,16 @@ extension IMAPClient {
             case .uid(let uidValue):
                 uid = uidValue
             case .flags(let flagValues):
-                flags = Set(flagValues.compactMap { Flag(rawValue: $0) })
-                // Anything that is not a standard system flag is a custom keyword
-                // (e.g. $Forwarded, @Triaged) that the Flag enum would otherwise drop.
-                keywords = Set(flagValues.filter { Flag(rawValue: $0) == nil })
+                // Single pass: recognised system flags go to `flags`; anything else
+                // (e.g. $Forwarded, @Triaged) is a custom keyword the Flag enum would
+                // otherwise drop.
+                for value in flagValues {
+                    if let flag = Flag(rawValue: value) {
+                        flags.insert(flag)
+                    } else {
+                        keywords.insert(value)
+                    }
+                }
             case .internalDate(let date):
                 internalDate = date
             case .rfc822Size(let sizeValue):
