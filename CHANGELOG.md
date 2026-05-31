@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MessageSummary.parseMimeContent(from:)` is now available as a `static` method, so callers with raw RFC 822 bytes but no populated `MessageSummary` (e.g. an `.eml` fixture harness) can parse without synthesising a stub instance (#22). The existing instance method is retained as a thin wrapper; both reach the same code path.
 - `MessageSummary.keywords: Set<String>` surfaces custom IMAP keywords the server reports that are not standard system flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords like `@Triaged` (#23). Previously these were silently dropped because `flags` is a closed `Flag` enum. Purely additive: `flags` behaviour is unchanged and the new init parameter defaults to `[]`.
 
+### Changed
+- MimeParser dependency now points at the HokuNZ-maintained fork (`HokuNZ/MimeParser`) pinned by semver (`.upToNextMinor(from: "0.2.6")`) instead of a `revision:` SHA on `miximka/MimeParser` (#12, #13). SwiftPM treats branch/revision pins as unstable, so any downstream consumer pinning SwiftIMAP by a version requirement (`exactVersion`, `from:`, etc.) failed to resolve. A semver-tagged dependency makes SwiftIMAP's graph stable and resolvable. The fork's library sources are identical to the previously pinned commit (`miximka/MimeParser` master tip `0903ca7` at fork time), so there is no behavioural change; the tagged commit additionally adds a sync workflow and a README maintenance note. That scheduled workflow watches the dormant upstream and opens a tracking issue if it advances.
+
 ## [1.2.4] - 2026-05-24
 
 ### Fixed

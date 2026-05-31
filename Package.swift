@@ -25,8 +25,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.3.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.3.0"),
-        // Pinned by revision (not branch) so SwiftPM consumers can resolve SwiftIMAP using an exact version constraint.
-        .package(url: "https://github.com/miximka/MimeParser.git", revision: "0903ca7e885cd39bfc559cda4eb78ce537edb1b9")
+        // HokuNZ-maintained fork pinned by semver. SwiftPM won't let a version-resolved package
+        // depend on a branch/revision pin, so consumers pinning SwiftIMAP by any version
+        // requirement (from:, exact:, ranges) couldn't resolve it; see issues #12, #13.
+        .package(url: "https://github.com/HokuNZ/MimeParser.git", .upToNextMinor(from: "0.2.6"))
     ],
     targets: [
         .target(
