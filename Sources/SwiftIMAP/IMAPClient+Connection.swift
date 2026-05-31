@@ -61,7 +61,13 @@ extension IMAPClient {
     }
 
     public func disconnect() async {
-        _ = try? await logout()
+        do {
+            _ = try await logout()
+        } catch {
+            // A failed LOGOUT during teardown is non-fatal, but log it so a server
+            // that rejects or hangs on LOGOUT is diagnosable rather than invisible.
+            logger.debug("LOGOUT during disconnect failed (ignored): \(error.localizedDescription)")
+        }
         await connection.disconnect()
     }
 

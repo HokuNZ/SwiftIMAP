@@ -62,39 +62,45 @@ actor RetryHandler {
                 logger.debug("[\(operation)] Attempt \(attempt) of \(configuration.maxAttempts)")
                 return try await work()
             } catch {
-                lastError = error
-                
+                // The error under consideration. If reconnection is attempted and
+                // itself fails, this becomes the reconnect error so the retryability
+                // check and the thrown/recorded error stay consistent rather than
+                // diverging from the original work() error.
+                var currentError = error
+                lastError = currentError
+
                 // Check if we need to reconnect
-                if needsReconnect(error) && attempt < configuration.maxAttempts {
+                if needsReconnect(currentError) && attempt < configuration.maxAttempts {
                     logger.warning("[\(operation)] Connection lost. Attempting to reconnect...")
                     do {
                         try await reconnect()
                         logger.info("[\(operation)] Reconnected successfully")
                         // Continue to next attempt without delay
                         continue
-                    } catch {
-                        logger.error("[\(operation)] Reconnection failed: \(error)")
-                        lastError = error
+                    } catch let reconnectError {
+                        logger.error("[\(operation)] Reconnection failed: \(reconnectError)")
+                        currentError = reconnectError
+                        lastError = reconnectError
                     }
                 }
-                
+
                 // Check if error is retryable
-                let isRetryable = isRetryableError(error)
-                
+                let isRetryable = isRetryableError(currentError)
+
                 if !isRetryable {
-                    logger.error("[\(operation)] Non-retryable error: \(error)")
-                    throw error
+                    logger.error("[\(operation)] Non-retryable error: \(currentError)")
+                    throw currentError
                 }
-                
+
                 if attempt == configuration.maxAttempts {
-                    logger.error("[\(operation)] Max attempts reached. Last error: \(error)")
+                    logger.error("[\(operation)] Max attempts reached. Last error: \(currentError)")
                     break
                 }
-                
+
                 // Calculate delay with exponential backoff and jitter
                 let delay = calculateDelay(for: attempt)
-                logger.warning("[\(operation)] Attempt \(attempt) failed: \(error). Retrying in \(String(format: "%.2f", delay))s...")
-                
+                logger.warning("[\(operation)] Attempt \(attempt) failed: \(currentError). Retrying in \(String(format: "%.2f", delay))s...")
+
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }

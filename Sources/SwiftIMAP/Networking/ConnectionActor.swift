@@ -84,7 +84,12 @@ actor ConnectionActor {
     private var pendingContinuationTag: String?
     private var connectionState: ConnectionState = .disconnected
     private var serverCapabilities: Set<String> = []
-    
+    // The code/text of an unsolicited mid-session `* BYE`, captured so that when the
+    // connection then drops, pending commands fail with the server's stated reason
+    // rather than a generic `disconnected`. Only surfaced at teardown, so it never
+    // interferes with a `* BYE` that legitimately precedes a LOGOUT completion.
+    private var pendingBye: (code: IMAPResponse.ResponseCode?, text: String?)?
+
     private struct PendingCommand {
         let command: IMAPCommand
         let continuation: CheckedContinuation<[IMAPResponse], Error>
@@ -404,10 +409,23 @@ actor ConnectionActor {
         case .failure(let error):
             for (_, pending) in pendingCommands {
                 pending.timeoutTask.cancel()
-                pending.continuation.resume(throwing: error)
+                if let bye = pendingBye {
+                    // The connection dropped after the server sent a `* BYE`; surface
+                    // its reason instead of the generic transport error.
+                    let response = IMAPServerResponse(
+                        status: .bye,
+                        code: bye.code,
+                        text: bye.text,
+                        commandName: pending.command.command.label
+                    )
+                    pending.continuation.resume(throwing: IMAPError.connectionClosed(response))
+                } else {
+                    pending.continuation.resume(throwing: error)
+                }
             }
             pendingCommands.removeAll()
             pendingContinuationTag = nil
+            pendingBye = nil
         }
     }
     
@@ -453,6 +471,9 @@ actor ConnectionActor {
                 serverCapabilities = Set(caps)
             case .status(let status):
                 updateCapabilitiesIfPresent(status)
+                if case .bye(let code, let text) = status {
+                    pendingBye = (code: code, text: text)
+                }
             default:
                 break
             }
@@ -536,6 +557,7 @@ actor ConnectionActor {
         }
         pendingCommands.removeAll()
         pendingContinuationTag = nil
+        pendingBye = nil
     }
 }
 

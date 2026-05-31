@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `ConnectionActor.waitForGreeting` no longer drops responses that arrive between the greeting and the persistent handler being installed (#26). The greeting handler is now a one-shot — it consumes the greeting batch and clears itself (inside the channel handler's lock, so no re-entrant deadlock), reverting the channel to buffering. The greeting closure's bare `resumedState` read was also replaced with a compare-and-exchange to remove a TOCTOU with the timeout task.
+- An unsolicited mid-session `* BYE` now surfaces its reason on in-flight commands: when the server sends `BYE` and drops the connection, pending commands fail with `connectionClosed(IMAPServerResponse)` carrying the BYE code and text rather than a bare `disconnected`. The reason is captured and only applied at teardown, so it never interferes with a `BYE` that legitimately precedes a `LOGOUT` completion.
+- `executeWithReconnect` now classifies and throws the reconnect failure (not the original error) when reconnection itself fails, so the surfaced error matches what actually went wrong.
+- A failed `LOGOUT` during `disconnect()` is now logged at debug level instead of being silently discarded.
 
 ## [1.2.4] - 2026-05-24
 

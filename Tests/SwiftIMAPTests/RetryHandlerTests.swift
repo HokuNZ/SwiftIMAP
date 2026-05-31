@@ -229,6 +229,33 @@ final class RetryHandlerTests: XCTestCase {
         XCTAssertEqual(attemptCount, 2)
     }
 
+    func testExecuteWithReconnectThrowsReconnectErrorOnReconnectFailure() async {
+        // When reconnection itself fails, the reconnect error must surface, not the
+        // original work() error that triggered the reconnect.
+        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.connectionLost])
+        let attempts = Counter()
+
+        do {
+            _ = try await handler.executeWithReconnect(
+                operation: "reconnect-fail",
+                needsReconnect: { _ in true },
+                reconnect: { throw IMAPError.invalidState("reconnect boom") },
+                work: {
+                    _ = await attempts.increment()
+                    throw IMAPError.connectionClosed(nil)
+                }
+            )
+            XCTFail("Expected the reconnect failure to propagate")
+        } catch {
+            guard case IMAPError.invalidState(let message) = error else {
+                return XCTFail("Expected the reconnect error (invalidState), got: \(error)")
+            }
+            XCTAssertEqual(message, "reconnect boom")
+            let count = await attempts.get()
+            XCTAssertEqual(count, 1)
+        }
+    }
+
     func testErrorDescriptionsCoverAllCases() {
         let cases: [(IMAPError, String)] = [
             (.connectionFailed("oops", underlying: nil), "Connection failed: oops"),

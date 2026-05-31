@@ -110,4 +110,40 @@ final class IMAPErrorContextTests: XCTestCase {
 
         await client.disconnect()
     }
+
+    /// An unsolicited mid-session `* BYE` followed by the server dropping the
+    /// connection surfaces the BYE's reason on the in-flight command, rather than a
+    /// bare `disconnected` (#26 follow-up).
+    func testMidSessionByeSurfacesReasonOnPendingCommand() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        // SELECT gets only an untagged BYE, then the server hangs up.
+        mockServer.setResponse(for: "SELECT", response: "* BYE [UNAVAILABLE] Server going down for maintenance")
+        mockServer.closeAfterResponse(toCommandContaining: "SELECT")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+        let client = IMAPClient(configuration: config)
+        try await client.connect()
+
+        do {
+            _ = try await client.selectMailbox("INBOX")
+            XCTFail("Expected the mid-session BYE + hang-up to fail SELECT")
+        } catch let error as IMAPError {
+            guard case .connectionClosed(let response) = error else {
+                XCTFail("Expected connectionClosed carrying the BYE reason, got: \(error)")
+                return
+            }
+            XCTAssertEqual(response?.status, .bye)
+            XCTAssertEqual(response?.code, .other("UNAVAILABLE", nil))
+            XCTAssertEqual(response?.text, "Server going down for maintenance")
+            XCTAssertEqual(response?.commandName, "SELECT")
+        }
+
+        await client.disconnect()
+    }
 }
