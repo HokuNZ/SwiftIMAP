@@ -158,7 +158,7 @@ actor ConnectionActor {
             connectionState = .connected
             
             let greeting = try await waitForGreeting()
-            logger.log(level: .debug, "Received greeting: \(greeting)")
+            logger.log(level: .debug, "Received greeting: \(greeting.loggingDescription)")
             
             if case .untagged(.status(.preauth(_, _))) = greeting {
                 connectionState = .authenticated
@@ -430,7 +430,7 @@ actor ConnectionActor {
     }
     
     private func handleResponse(_ response: IMAPResponse) async {
-        logger.log(level: .trace, "Handling response: \(response)")
+        logger.log(level: .trace, "Handling response: \(response.loggingDescription)")
         
         switch response {
         case .tagged(let tag, let status):
@@ -553,7 +553,20 @@ actor ConnectionActor {
         
         for (_, pending) in pendingCommands {
             pending.timeoutTask.cancel()
-            pending.continuation.resume(throwing: IMAPError.disconnected)
+            if let bye = pendingBye {
+                // Teardown after a `* BYE` was seen (e.g. an explicit disconnect that
+                // races the channel going inactive): surface the BYE reason rather
+                // than a bare transport error, matching the handleResponses path.
+                let response = IMAPServerResponse(
+                    status: .bye,
+                    code: bye.code,
+                    text: bye.text,
+                    commandName: pending.command.command.label
+                )
+                pending.continuation.resume(throwing: IMAPError.connectionClosed(response))
+            } else {
+                pending.continuation.resume(throwing: IMAPError.disconnected)
+            }
         }
         pendingCommands.removeAll()
         pendingContinuationTag = nil

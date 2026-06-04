@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - `IMAPError` no longer embeds command arguments in its messages, closing a credential/payload leak (#27). The `commandFailed` error previously built its command field with `String(describing:)`, so a rejected `LOGIN` produced an error (and `localizedDescription`) containing the cleartext password; `APPEND` embedded the whole message body. The debug log line for every outgoing command and the `invalidState` validator messages had the same leak. All now use a new argument-free `IMAPCommand.Command.label` (e.g. `"UID MOVE"`, `"LOGIN"`).
 - Parser errors now truncate the offending server input (`String.truncatedForDiagnostics`), so a malformed or oversized response line can no longer dump unbounded content (including message data) into logs or crash reports.
+- `FETCH` responses are now redacted in `.debug`/`.trace` logs: message bodies, headers, and decoded envelope fields are reduced to byte counts via `IMAPResponse.loggingDescription` rather than rendered in full, so enabling verbose logging can no longer spill message content (PII) into logs or crash reports.
 
 ### Added
 - `IMAPServerResponse` value type carrying the server's `status` (`NO`/`BAD`/`BYE`), parsed `code`, `text`, and the argument-free `commandName`, plus a reconstructed `line` for logging (e.g. `NO [TRYCREATE] Mailbox does not exist`) (#27). Surfaced on `commandFailed` and `connectionClosed` so callers (e.g. MailTriage #226) can log a faithful server response line and distinguish causes. Includes semantic accessors: `isMailboxNotFound`, `isOverQuota`, `isPermissionDenied`, `isAuthenticationFailure`, and `codeName`.
@@ -22,16 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `connectionFailed(String)` → `connectionFailed(String, underlying: (any Error)?)` and `tlsError(String)` → `tlsError(String, underlying: (any Error)?)`, preserving the typed NIO/SSL cause.
   - `timeout` → `timeout(command: String?)`, identifying which operation timed out.
 - The greeting wait now honours `IMAPConfiguration.connectionTimeout` instead of a hardcoded 5 seconds.
-- `connect()` failures (which surface as `connectionFailed`) are now retryable; previously the retry wrapper around `connect()` was a no-op for them. Retry classification of server rejections now branches on the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`) and never retries `BAD`.
+- `connect()` failures (which surface as `connectionFailed`) are now retryable; previously the retry wrapper around `connect()` was a no-op for them. Retry classification of server rejections now branches on the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`) and never retries `BAD`. When a code is present it is authoritative: a definitive code such as `[NONEXISTENT]` is not retried even if the free text contains retry-flavoured words, and the text is consulted only when no code is sent. A `* BYE` greeting that names a definitive condition is treated as the server rejecting the connection and is no longer retried (a bare close or a `[UNAVAILABLE]`-style transient BYE still is).
 
 ### Removed
 - **Breaking.** Dead `IMAPError` cases `mailboxNotFound`, `messageNotFound`, `quotaExceeded`, and `permissionDenied`, which had no producers (#27). The equivalent information is available uniformly via `IMAPServerResponse.code` and its semantic accessors.
 
 ### Fixed
 - `ConnectionActor.waitForGreeting` no longer drops responses that arrive between the greeting and the persistent handler being installed (#26). The greeting handler is now a one-shot — it consumes the greeting batch and clears itself (inside the channel handler's lock, so no re-entrant deadlock), reverting the channel to buffering. The greeting closure's bare `resumedState` read was also replaced with a compare-and-exchange to remove a TOCTOU with the timeout task.
-- An unsolicited mid-session `* BYE` now surfaces its reason on in-flight commands: when the server sends `BYE` and drops the connection, pending commands fail with `connectionClosed(IMAPServerResponse)` carrying the BYE code and text rather than a bare `disconnected`. The reason is captured and only applied at teardown, so it never interferes with a `BYE` that legitimately precedes a `LOGOUT` completion.
+- An unsolicited mid-session `* BYE` now surfaces its reason on in-flight commands: when the server sends `BYE` and drops the connection, pending commands fail with `connectionClosed(IMAPServerResponse)` carrying the BYE code and text rather than a bare `disconnected`. The reason is captured and applied at teardown — including an explicit `disconnect()` that races the channel closing — so it never interferes with a `BYE` that legitimately precedes a `LOGOUT` completion.
 - `executeWithReconnect` now classifies and throws the reconnect failure (not the original error) when reconnection itself fails, so the surfaced error matches what actually went wrong.
 - A failed `LOGOUT` during `disconnect()` is now logged at debug level instead of being silently discarded.
+- `RetryConfiguration` now rejects `maxAttempts < 1` at construction with a clear precondition message, instead of trapping deep in the retry loop on the `1...maxAttempts` range.
 
 ## [1.3.0] - 2026-06-01
 

@@ -70,6 +70,11 @@ public struct IMAPServerResponse: Sendable, Equatable {
     /// The response code's name in upper case (e.g. `"NONEXISTENT"`, `"OVERQUOTA"`),
     /// or `nil` if the server sent no response code. Lets callers branch on RFC 5530
     /// codes without re-deriving them from ``line``.
+    ///
+    /// - Note: this is the *raw* code token, so `[TRYCREATE]` returns `"TRYCREATE"`,
+    ///   not `"NONEXISTENT"`. The two codes both mean "mailbox absent", so prefer the
+    ///   semantic accessors (e.g. ``isMailboxNotFound``) over `codeName` comparisons
+    ///   for condition checks; use `codeName` only when you need the literal token.
     public var codeName: String? {
         guard let code else { return nil }
         return IMAPServerResponse.render(code)

@@ -126,7 +126,15 @@ actor RetryHandler {
         // Check for specific IMAP errors
         if let imapError = error as? IMAPError {
             switch imapError {
-            case .connectionError, .connectionClosed, .connectionFailed:
+            case .connectionClosed(let response):
+                guard configuration.retryableErrors.contains(.connectionLost) else { return false }
+                // A `BYE` that names a definitive condition (or any typed code) is the
+                // server actively rejecting us — e.g. a `* BYE` greeting — so retrying
+                // is pointless. Retry only a bare closure (no response) or a BYE that
+                // names a transient condition like `[UNAVAILABLE]`.
+                if let response { return RetryHandler.isTransientServerResponse(response) }
+                return true
+            case .connectionError, .connectionFailed:
                 return configuration.retryableErrors.contains(.connectionLost)
             case .timeout:
                 return configuration.retryableErrors.contains(.timeout)
@@ -171,14 +179,20 @@ actor RetryHandler {
 
     /// Whether a `NO` server response indicates a transient, retryable condition.
     /// Prefers the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`),
-    /// and falls back to the response text for servers that omit a code.
+    /// and falls back to the response text only for servers that omit a code.
     private static func isTransientServerResponse(_ response: IMAPServerResponse) -> Bool {
         // UNAVAILABLE, INUSE, and SERVERBUG are RFC 5530 codes with no typed case in
         // IMAPResponse.ResponseCode, so they always arrive as `.other`. If a named
         // case is ever added for one of these, add it to this check too.
         let transientCodes: Set<String> = ["UNAVAILABLE", "INUSE", "SERVERBUG"]
-        if case .other(let name, _) = response.code, transientCodes.contains(name.uppercased()) {
-            return true
+        // A code, when present, is authoritative: a definitive code like
+        // `[NONEXISTENT]` must not be retried just because the free text happens to
+        // contain words like "try again". Only consult the text when no code is sent.
+        if let code = response.code {
+            if case .other(let name, _) = code {
+                return transientCodes.contains(name.uppercased())
+            }
+            return false
         }
         if let text = response.text {
             return isTransientText(text)

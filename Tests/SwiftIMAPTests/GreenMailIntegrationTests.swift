@@ -77,6 +77,43 @@ final class GreenMailIntegrationTests: XCTestCase {
         }
     }
 
+    func testRejectedMoveToMissingMailboxExposesServerResponse() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        // Seed a message so there is a real UID to move.
+        let subject = "GreenMail Reject \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(subject: subject, body: "Reject-\(UUID().uuidString.prefix(8))")
+        try await client.appendMessage(message, to: "INBOX")
+
+        let matches = try await client.searchMessagesBySubject(subject, in: "INBOX")
+        guard let uid = matches.first?.uid else {
+            XCTFail("Expected a UID from the subject search")
+            return
+        }
+        defer { Task { try? await client.deleteMessage(uid: uid, in: "INBOX") } }
+
+        // Move to a mailbox that does not exist: the server must reject with `NO` and
+        // a mailbox-absent code (`[TRYCREATE]`/`[NONEXISTENT]`), and that response must
+        // be surfaced structurally on IMAPServerResponse rather than as a bare error.
+        let missingMailbox = makeMailboxName(prefix: "DoesNotExist")
+        do {
+            try await client.moveMessage(uid: uid, from: "INBOX", to: missingMailbox)
+            XCTFail("Expected MOVE to a missing mailbox to fail")
+        } catch let error as IMAPError {
+            guard case .commandFailed(let response) = error else {
+                XCTFail("Expected commandFailed, got: \(error)")
+                return
+            }
+            XCTAssertEqual(response.status, .no)
+            XCTAssertFalse(response.line.isEmpty, "Expected a reconstructed server response line")
+            XCTAssertTrue(
+                response.isMailboxNotFound,
+                "Expected a mailbox-absent code; got code \(String(describing: response.code)), line: \(response.line)"
+            )
+        }
+    }
+
     func testAppendFetchFlagsAndBody() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }

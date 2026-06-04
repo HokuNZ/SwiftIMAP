@@ -51,3 +51,5 @@ Thumbs.db
 # Local environment
 .env
 .env.local
+# Local Claude Code harness state
+.claude/

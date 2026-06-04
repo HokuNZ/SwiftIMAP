@@ -283,6 +283,108 @@ final class RetryHandlerTests: XCTestCase {
         }
     }
 
+    func testDoesNotRetryNonTransientCodeDespiteTransientText() async {
+        // A definitive code ([NONEXISTENT]) is authoritative: the command must not be
+        // retried just because the free text happens to contain "try again".
+        let handler = makeHandler(maxAttempts: 3, retryableErrors: [.temporaryFailure])
+        let attempts = Counter()
+        let response = IMAPServerResponse(
+            status: .no,
+            code: .other("NONEXISTENT", nil),
+            text: "Mailbox busy, try again later",
+            commandName: "UID MOVE"
+        )
+
+        do {
+            _ = try await handler.execute(operation: "code-wins") {
+                _ = await attempts.increment()
+                throw IMAPError.commandFailed(response)
+            }
+            XCTFail("Expected the permanent failure to propagate")
+        } catch {
+            let count = await attempts.get()
+            XCTAssertEqual(count, 1, "A non-transient code must not be retried on a text match")
+        }
+    }
+
+    func testRetriesOnTransientTextWhenNoCode() async {
+        // With no code present, the free text is the only signal, so a transient
+        // phrase should still trigger a retry.
+        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.temporaryFailure])
+        let attempts = Counter()
+        let response = IMAPServerResponse(
+            status: .no,
+            code: nil,
+            text: "Please try again",
+            commandName: "UID MOVE"
+        )
+
+        do {
+            _ = try await handler.execute(operation: "text-fallback") {
+                _ = await attempts.increment()
+                throw IMAPError.commandFailed(response)
+            }
+            XCTFail("Expected failure after retries are exhausted")
+        } catch {
+            let count = await attempts.get()
+            XCTAssertEqual(count, 2, "Transient text with no code should be retried")
+        }
+    }
+
+    func testDoesNotRetryDefinitiveByeGreeting() async {
+        // A `* BYE` greeting with a definitive code is the server actively rejecting
+        // the connection; retrying with backoff is pointless and must not happen.
+        let handler = makeHandler(maxAttempts: 3, retryableErrors: [.connectionLost])
+        let attempts = Counter()
+        let bye = IMAPServerResponse(status: .bye, code: .alert, text: "Server going away", commandName: "CONNECT")
+
+        do {
+            _ = try await handler.execute(operation: "bye-greeting") {
+                _ = await attempts.increment()
+                throw IMAPError.connectionClosed(bye)
+            }
+            XCTFail("Expected the BYE greeting to propagate")
+        } catch {
+            let count = await attempts.get()
+            XCTAssertEqual(count, 1, "A definitive BYE greeting must not be retried")
+        }
+    }
+
+    func testRetriesBareConnectionClose() async {
+        // A bare connection loss (no server response) is transient: retry it.
+        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.connectionLost])
+        let attempts = Counter()
+
+        do {
+            _ = try await handler.execute(operation: "bare-close") {
+                _ = await attempts.increment()
+                throw IMAPError.connectionClosed(nil)
+            }
+            XCTFail("Expected failure after retries are exhausted")
+        } catch {
+            let count = await attempts.get()
+            XCTAssertEqual(count, 2, "A bare connection close should be retried")
+        }
+    }
+
+    func testRetriesByeNamingTransientCondition() async {
+        // A BYE that names a transient condition ([UNAVAILABLE]) should still retry.
+        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.connectionLost])
+        let attempts = Counter()
+        let bye = IMAPServerResponse(status: .bye, code: .other("UNAVAILABLE", nil), text: "Restarting", commandName: "CONNECT")
+
+        do {
+            _ = try await handler.execute(operation: "bye-transient") {
+                _ = await attempts.increment()
+                throw IMAPError.connectionClosed(bye)
+            }
+            XCTFail("Expected failure after retries are exhausted")
+        } catch {
+            let count = await attempts.get()
+            XCTAssertEqual(count, 2, "A BYE naming a transient condition should be retried")
+        }
+    }
+
     func testRequiresReconnectionFlagsConnectionErrors() {
         XCTAssertTrue(IMAPError.connectionError("down").requiresReconnection)
         XCTAssertTrue(IMAPError.connectionClosed(nil).requiresReconnection)
