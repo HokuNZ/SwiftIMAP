@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parser errors now truncate the offending server input (`String.truncatedForDiagnostics`), so a malformed or oversized response line can no longer dump unbounded content (including message data) into logs or crash reports.
 
 ### Added
-- `MessageSummary.parseMimeContent(from:)` is now available as a `static` method, so callers with raw RFC 822 bytes but no populated `MessageSummary` (e.g. an `.eml` fixture harness) can parse without synthesising a stub instance (#22). The existing instance method is retained as a thin wrapper; both reach the same code path.
-- `MessageSummary.keywords: Set<String>` surfaces custom IMAP keywords the server reports that are not standard system flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords like `@Triaged` (#23). Previously these were silently dropped because `flags` is a closed `Flag` enum. Purely additive: `flags` behaviour is unchanged and the new init parameter defaults to `[]`.
 - `IMAPServerResponse` value type carrying the server's `status` (`NO`/`BAD`/`BYE`), parsed `code`, `text`, and the argument-free `commandName`, plus a reconstructed `line` for logging (e.g. `NO [TRYCREATE] Mailbox does not exist`) (#27). Surfaced on `commandFailed` and `connectionClosed` so callers (e.g. MailTriage #226) can log a faithful server response line and distinguish causes. Includes semantic accessors: `isMailboxNotFound`, `isOverQuota`, `isPermissionDenied`, `isAuthenticationFailure`, and `codeName`.
 - `IMAPCommand.Command.label` / `IMAPCommand.UIDCommand.label`: the argument-free IMAP verb, safe to log.
 
@@ -34,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An unsolicited mid-session `* BYE` now surfaces its reason on in-flight commands: when the server sends `BYE` and drops the connection, pending commands fail with `connectionClosed(IMAPServerResponse)` carrying the BYE code and text rather than a bare `disconnected`. The reason is captured and only applied at teardown, so it never interferes with a `BYE` that legitimately precedes a `LOGOUT` completion.
 - `executeWithReconnect` now classifies and throws the reconnect failure (not the original error) when reconnection itself fails, so the surfaced error matches what actually went wrong.
 - A failed `LOGOUT` during `disconnect()` is now logged at debug level instead of being silently discarded.
+
+## [1.3.0] - 2026-06-01
+
+### Added
+- `MessageSummary.parseMimeContent(from:)` is now available as a `static` method, so callers with raw RFC 822 bytes but no populated `MessageSummary` (e.g. an `.eml` fixture harness) can parse without synthesising a stub instance (#22). The existing instance method is retained as a thin wrapper; both reach the same code path.
+- `MessageSummary.keywords: Set<String>` surfaces custom IMAP keywords the server reports that are not standard system flags — e.g. `$Forwarded`, `$Junk`/`$NotJunk`, or client-defined keywords like `@Triaged` (#23). Previously these were silently dropped because `flags` is a closed `Flag` enum. Purely additive: `flags` behaviour is unchanged and the new init parameter defaults to `[]`.
+
+### Changed
+- MimeParser dependency now points at the HokuNZ-maintained fork (`HokuNZ/MimeParser`) pinned by semver (`.upToNextMinor(from: "0.2.6")`) instead of a `revision:` SHA on `miximka/MimeParser` (#12, #13). SwiftPM treats branch/revision pins as unstable, so any downstream consumer pinning SwiftIMAP by a version requirement (`exactVersion`, `from:`, etc.) failed to resolve. A semver-tagged dependency makes SwiftIMAP's graph stable and resolvable. The fork's library sources are identical to the previously pinned commit (`miximka/MimeParser` master tip `0903ca7` at fork time), so there is no behavioural change; the tagged commit additionally adds a sync workflow and a README maintenance note. That scheduled workflow watches the dormant upstream and opens a tracking issue if it advances.
 
 ## [1.2.4] - 2026-05-24
 
