@@ -129,8 +129,8 @@ actor RetryHandler {
             case .connectionClosed(let response):
                 guard configuration.retryableErrors.contains(.connectionLost) else { return false }
                 // A `BYE` that names a definitive condition (or any typed code) is the
-                // server actively rejecting us — e.g. a `* BYE` greeting — so retrying
-                // is pointless. Retry only a bare closure (no response) or a BYE that
+                // server actively rejecting us (e.g. a `* BYE` greeting), so retrying
+                // is pointless. Retry only a bare close (no response) or a BYE that
                 // names a transient condition like `[UNAVAILABLE]`.
                 if let response { return RetryHandler.isTransientServerResponse(response) }
                 return true
