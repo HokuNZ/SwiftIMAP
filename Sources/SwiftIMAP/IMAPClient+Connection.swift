@@ -75,41 +75,58 @@ extension IMAPClient {
 
     private func connectAttempt() async throws {
         try await retryHandler.execute(operation: "connect") {
-            let greeting = try await self.connection.connect()
-            let preauthenticated = {
-                if case .untagged(.status(.preauth(_, _))) = greeting {
-                    return true
-                }
-                return false
-            }()
-
-            if case .untagged(.status(.bye(let code, let text))) = greeting {
-                let response = IMAPServerResponse(
-                    status: .bye,
-                    code: code,
-                    text: text,
-                    commandName: "CONNECT"
-                )
-                throw IMAPError.connectionClosed(response)
+            do {
+                try await self.establishSession()
+            } catch {
+                // A failed attempt must not leave a half-established session: the
+                // channel can be up with state .connected/.authenticated when a
+                // later step throws (STARTTLS unsupported, PREAUTH under
+                // .startTLS, an auth or capability failure). Without teardown,
+                // isHealthy() could report the failed connect as usable — for
+                // the PREAUTH/STARTTLS case that would silently keep an
+                // unencrypted session — and a retry would die on invalidState
+                // against the still-open channel.
+                await self.connection.disconnect()
+                throw error
             }
+        }
+    }
 
-            let capabilities = try await self.capability()
-
-            if self.configuration.tlsMode == .startTLS {
-                if preauthenticated {
-                    throw IMAPError.invalidState("STARTTLS not permitted after PREAUTH")
-                }
-                if capabilities.contains("STARTTLS") {
-                    try await self.startTLS()
-                    _ = try await self.capability()
-                } else {
-                    throw IMAPError.unsupportedCapability("STARTTLS")
-                }
+    private func establishSession() async throws {
+        let greeting = try await self.connection.connect()
+        let preauthenticated = {
+            if case .untagged(.status(.preauth(_, _))) = greeting {
+                return true
             }
+            return false
+        }()
 
-            if !preauthenticated {
-                try await self.authenticate()
+        if case .untagged(.status(.bye(let code, let text))) = greeting {
+            let response = IMAPServerResponse(
+                status: .bye,
+                code: code,
+                text: text,
+                commandName: "CONNECT"
+            )
+            throw IMAPError.connectionClosed(response)
+        }
+
+        let capabilities = try await self.capability()
+
+        if self.configuration.tlsMode == .startTLS {
+            if preauthenticated {
+                throw IMAPError.invalidState("STARTTLS not permitted after PREAUTH")
             }
+            if capabilities.contains("STARTTLS") {
+                try await self.startTLS()
+                _ = try await self.capability()
+            } else {
+                throw IMAPError.unsupportedCapability("STARTTLS")
+            }
+        }
+
+        if !preauthenticated {
+            try await self.authenticate()
         }
     }
 

@@ -106,6 +106,91 @@ final class IMAPConnectIdempotencyTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// A failed connect attempt must not leave a half-established session
+    /// (PR #52 review): STARTTLS unsupported throws AFTER the channel is up;
+    /// without teardown the live channel makes the next attempt die on
+    /// invalidState instead of re-attempting.
+    func testFailedStartTLSConnectTearsDownAndAllowsRetry() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .startTLS,
+            authMethod: .login(username: "testuser", password: "testpass"),
+            retryConfiguration: RetryConfiguration(maxAttempts: 1)
+        )
+        let client = IMAPClient(configuration: config)
+
+        for attempt in 1...2 {
+            do {
+                try await client.connect()
+                XCTFail("Expected STARTTLS capability failure on attempt \(attempt)")
+            } catch IMAPError.unsupportedCapability(let capability) {
+                XCTAssertEqual(capability, "STARTTLS",
+                               "Attempt \(attempt) must fail on the real cause, not invalidState from a leaked channel")
+            }
+        }
+    }
+
+    /// The security case (PR #52 review): a PREAUTH greeting under .startTLS
+    /// throws with the actor already in .authenticated state. Without teardown,
+    /// isHealthy() would make the NEXT connect() a silent no-op on an
+    /// unencrypted session whose establishment was rejected.
+    func testPreauthUnderStartTLSDoesNotLeaveUsableSession() async throws {
+        mockServer.setResponse(for: "GREETING", response: "* PREAUTH IMAP4rev1")
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 STARTTLS")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .startTLS,
+            authMethod: .login(username: "testuser", password: "testpass"),
+            retryConfiguration: RetryConfiguration(maxAttempts: 1)
+        )
+        let client = IMAPClient(configuration: config)
+
+        do {
+            try await client.connect()
+            XCTFail("Expected PREAUTH + startTLS to be rejected")
+        } catch IMAPError.invalidState(let message) {
+            XCTAssertEqual(message, "STARTTLS not permitted after PREAUTH")
+        }
+
+        do {
+            try await client.connect()
+            XCTFail("A second connect() must not silently succeed on the rejected unencrypted session")
+        } catch IMAPError.invalidState(let message) {
+            XCTAssertEqual(message, "STARTTLS not permitted after PREAUTH")
+        }
+    }
+
+    /// Rejected credentials leave the client cleanly disconnected: a retry with
+    /// the same client re-attempts (fresh connection, fresh LOGIN).
+    func testFailedLoginTearsDownAndAllowsRetry() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "NO [AUTHENTICATIONFAILED] Invalid credentials")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "wrongpass"),
+            retryConfiguration: RetryConfiguration(maxAttempts: 1)
+        )
+        let client = IMAPClient(configuration: config)
+
+        for _ in 1...2 {
+            do {
+                try await client.connect()
+                XCTFail("Expected login rejection")
+            } catch IMAPError.authenticationFailed(_, let response) {
+                XCTAssertNotNil(response)
+            }
+        }
+        XCTAssertEqual(loginCount, 2, "Each attempt must reach the server with a fresh LOGIN")
+    }
+
     /// Concurrent reconnects after a drop coalesce too — the practical case
     /// (e.g. several in-flight operations all hitting the same dead connection
     /// and racing to re-establish): one fresh LOGIN, no invalidState.
