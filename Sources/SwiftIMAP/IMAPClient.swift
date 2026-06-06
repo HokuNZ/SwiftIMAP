@@ -6,6 +6,7 @@ public final class IMAPClient: Sendable {
     let connection: ConnectionActor
     let retryHandler: RetryHandler
     let logger: Logger
+    let connectCoordinator = ConnectCoordinator()
 
     public init(configuration: IMAPConfiguration, tlsConfiguration: TLSConfiguration = TLSConfiguration()) {
         self.configuration = configuration
