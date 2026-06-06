@@ -19,8 +19,49 @@ private final class SASLInitialResponseState: @unchecked Sendable {
     }
 }
 
+/// Serialises connect attempts so concurrent `connect()` callers coalesce onto
+/// a single in-flight attempt instead of racing the connection actor (which
+/// would fail the loser with `invalidState`).
+actor ConnectCoordinator {
+    private var inFlight: Task<Void, Error>?
+
+    /// Run `work` as the single in-flight connect attempt. Callers arriving
+    /// while an attempt is running await that attempt's outcome rather than
+    /// starting another.
+    ///
+    /// - Note: the attempt runs in its own task, so cancelling one waiting
+    ///   caller does not abort an attempt other callers may be sharing.
+    func run(_ work: @escaping @Sendable () async throws -> Void) async throws {
+        if let inFlight {
+            try await inFlight.value
+            return
+        }
+        let task = Task { try await work() }
+        inFlight = task
+        defer { inFlight = nil }
+        try await task.value
+    }
+}
+
 extension IMAPClient {
+    /// Establish (or re-establish) the connection and authenticate.
+    ///
+    /// Idempotent (#37):
+    /// - on an already-connected, healthy client this is a no-op;
+    /// - on a disconnected or stale client (e.g. the connection dropped) it
+    ///   reconnects and re-authenticates;
+    /// - concurrent calls coalesce onto a single attempt — the second caller
+    ///   awaits the in-flight attempt instead of failing with `invalidState`.
     public func connect() async throws {
+        try await connectCoordinator.run { [self] in
+            if await connection.isHealthy() {
+                return
+            }
+            try await connectAttempt()
+        }
+    }
+
+    private func connectAttempt() async throws {
         try await retryHandler.execute(operation: "connect") {
             let greeting = try await self.connection.connect()
             let preauthenticated = {

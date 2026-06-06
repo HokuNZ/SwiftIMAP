@@ -39,6 +39,24 @@ final class GreenMailIntegrationTests: XCTestCase {
         _ = try await client.selectMailbox("INBOX")
     }
 
+    /// connect() is idempotent against a real server (#37): a second call on a
+    /// healthy client is a no-op and the session stays fully usable.
+    func testConnectIsIdempotentAgainstRealServer() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        try await client.connect()
+        try await client.connect()
+
+        let mailboxes = try await client.listMailboxes()
+        XCTAssertTrue(mailboxes.contains { $0.name.uppercased() == "INBOX" })
+
+        // And after an explicit disconnect, connect() re-establishes.
+        await client.disconnect()
+        try await client.connect()
+        _ = try await client.selectMailbox("INBOX")
+    }
+
     func testSearchFlagMoveAndDelete() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
