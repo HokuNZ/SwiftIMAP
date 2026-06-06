@@ -185,7 +185,7 @@ actor RetryHandler {
     /// Whether a `NO` server response indicates a transient, retryable condition.
     /// Prefers the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`),
     /// and falls back to the response text only for servers that omit a code.
-    private static func isTransientServerResponse(_ response: IMAPServerResponse) -> Bool {
+    fileprivate static func isTransientServerResponse(_ response: IMAPServerResponse) -> Bool {
         // UNAVAILABLE, INUSE, and SERVERBUG are RFC 5530 codes with no typed case in
         // IMAPResponse.ResponseCode, so they always arrive as `.other`. If a named
         // case is ever added for one of these, add it to this check too.
@@ -212,7 +212,14 @@ extension IMAPError {
     /// Determines if the error indicates a lost connection that requires reconnection
     var requiresReconnection: Bool {
         switch self {
-        case .connectionClosed, .connectionFailed:
+        case .connectionFailed:
+            return true
+        case .connectionClosed(let response):
+            // Mirror retry classification: a BYE naming a definitive condition is
+            // the server actively rejecting us — reconnecting would only replace
+            // the BYE reason with whatever the reconnect throws. Reconnect on a
+            // bare drop (nil) or a transient condition like [UNAVAILABLE].
+            if let response { return RetryHandler.isTransientServerResponse(response) }
             return true
         default:
             return false

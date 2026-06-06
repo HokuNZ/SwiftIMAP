@@ -148,6 +148,65 @@ final class IMAPErrorContextTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// End-to-end regression for #35 / A4: an abrupt connection drop (no BYE)
+    /// mid-way through a wrapped operation reconnects and retries transparently.
+    /// Previously the drop surfaced as `disconnected` (not reconnectable) and the
+    /// actor state was never reset, so the reconnect itself threw `invalidState`.
+    func testWrappedOperationReconnectsAndRetriesAfterAbruptDrop() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 7 9")
+        // First UID SEARCH gets its untagged reply but no tagged completion, then
+        // the server hangs up; the retry layer must reconnect and re-run it.
+        mockServer.closeOnceAfterResponse(toCommandContaining: "UID SEARCH")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass"),
+            retryConfiguration: RetryConfiguration(maxAttempts: 2, initialDelay: 0, maxDelay: 0)
+        )
+        let client = IMAPClient(configuration: config)
+        try await client.connect()
+
+        let uids = try await client.listMessageUIDs(in: "INBOX")
+        XCTAssertEqual(uids, [7, 9], "Operation should succeed transparently after reconnect")
+
+        let logins = mockServer.receivedCommands.filter { $0.uppercased().contains("LOGIN") }
+        XCTAssertEqual(logins.count, 2, "Expected a second LOGIN proving a reconnect happened")
+
+        await client.disconnect()
+    }
+
+    /// A local SASL failure (the response handler returning nil) surfaces as
+    /// `authenticationFailed` with `response: nil` — no server response involved.
+    func testSaslHandlerReturningNilIsLocalAuthenticationFailure() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 AUTH=CUSTOM")
+        mockServer.setAuthenticateChallenges(["c2VydmVyLWNoYWxsZW5nZQ=="])
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .sasl(mechanism: "CUSTOM", initialResponse: nil, responseHandler: { _ in nil })
+        )
+        let client = IMAPClient(configuration: config)
+
+        do {
+            try await client.connect()
+            XCTFail("Expected SASL nil response to fail authentication")
+        } catch let error as IMAPError {
+            guard case .authenticationFailed(let message, let response) = error else {
+                XCTFail("Expected authenticationFailed, got: \(error)")
+                return
+            }
+            XCTAssertEqual(message, "SASL response handler returned nil")
+            XCTAssertNil(response, "A local failure must not carry a server response")
+        }
+    }
+
     /// An unsolicited mid-session `* BYE` followed by the server dropping the
     /// connection surfaces the BYE's reason on the in-flight command, rather than a
     /// bare `disconnected` (#26 follow-up).

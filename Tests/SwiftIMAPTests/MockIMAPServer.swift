@@ -23,6 +23,7 @@ class MockIMAPServer {
     private var _receivedCommands: [String] = []
     private var _receivedContinuations: [String] = []
     private var _closeAfterKeywords: Set<String> = []
+    private var _closeOnceKeywords: Set<String> = []
 
     var receivedCommands: [String] {
         lock.withLock { Array(_receivedCommands) }
@@ -51,9 +52,20 @@ class MockIMAPServer {
         lock.withLock { _ = _closeAfterKeywords.insert(keyword.uppercased()) }
     }
 
+    /// One-shot variant of `closeAfterResponse`: hang up after the first matching
+    /// command, then behave normally — so a reconnecting client can run the same
+    /// command successfully on its second attempt.
+    func closeOnceAfterResponse(toCommandContaining keyword: String) {
+        lock.withLock { _ = _closeOnceKeywords.insert(keyword.uppercased()) }
+    }
+
     func shouldCloseAfter(_ command: String) -> Bool {
         lock.withLock {
             let upper = command.uppercased()
+            if let match = _closeOnceKeywords.first(where: { upper.contains($0) }) {
+                _closeOnceKeywords.remove(match)
+                return true
+            }
             return _closeAfterKeywords.contains { upper.contains($0) }
         }
     }
@@ -168,7 +180,8 @@ class MockIMAPServer {
                 // For a close-after command, send the untagged line alone (no tagged
                 // completion) so the client command stays pending until the hang-up.
                 let upperLine = trimmed.uppercased()
-                if _closeAfterKeywords.contains(where: { upperLine.contains($0) }) {
+                if _closeAfterKeywords.contains(where: { upperLine.contains($0) })
+                    || _closeOnceKeywords.contains(where: { upperLine.contains($0) }) {
                     return response
                 }
                 return "\(response)\r\n\(tag) OK \(cmd) completed"

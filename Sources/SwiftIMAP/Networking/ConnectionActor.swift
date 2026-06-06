@@ -426,9 +426,19 @@ actor ConnectionActor {
             pendingCommands.removeAll()
             pendingContinuationTag = nil
             pendingBye = nil
+
+            // If the channel is actually gone (abrupt drop / errorCaught-then-close,
+            // as opposed to a parse error on a live connection), reset the actor
+            // state so a later connect() can re-establish. Without this the state
+            // stays .authenticated/.selected and connect() throws invalidState,
+            // making reconnect-after-drop impossible (#35 / A4).
+            if channel?.isActive != true {
+                connectionState = .disconnected
+                await cleanup()
+            }
         }
     }
-    
+
     private func handleResponse(_ response: IMAPResponse) async {
         logger.log(level: .trace, "Handling response: \(response.loggingDescription)")
         
