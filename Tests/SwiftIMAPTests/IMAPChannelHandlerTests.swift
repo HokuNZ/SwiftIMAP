@@ -183,8 +183,9 @@ final class IMAPChannelHandlerTests: XCTestCase {
 
     /// Transport errors surfaced via errorCaught (TLS failures, read errors) are
     /// terminal — the handler closes the channel — so they must arrive as a
-    /// typed, reconnectable IMAPError, not the raw NIO error, or they bypass
-    /// requiresReconnection (PR #41 review).
+    /// typed, reconnectable IMAPError. Dispatching the raw NIO error would
+    /// bypass retry classification, which only matches IMAPError, leaving the
+    /// operation failed with no reconnect attempt.
     func testErrorCaughtWrapsTransportErrorAsReconnectable() throws {
         struct TransportError: Error {}
         let handler = makeHandler()
