@@ -12,10 +12,11 @@ Date: 2026-06-06. Branch under review: `version/v2.0` (post-#27 error-handling w
 - Clean breaks, no deprecation shims.
 - The repo is public, so the surface should also be coherent and well documented for
   unknown future consumers, with a migration guide.
-- Enum policy: library enums may gain new cases in **minor** releases. Consumers must
-  always include a `default` (or `@unknown default` is not available for source
-  packages, so a plain `default`) when switching over library enums. Documented in the
-  README as part of this release.
+- Enum policy: library enums may gain new cases in **minor** releases. This is
+  published guidance, not something the library can enforce: Swift source packages are
+  non-resilient, so consumers *can* switch exhaustively and `@unknown default` is
+  unavailable to them. The README advises a plain `default` arm when switching over
+  library enums; consumers who switch exhaustively accept source breakage on minors.
 - Swift 6 strict concurrency is out of scope (parked for v3.0).
 - Internal-detail exposure is bounded by what MailTriage demonstrably needs or has
   worked around.
@@ -104,10 +105,13 @@ as `.commandFailed(response)` like any other command. Consumers will naturally
 pattern-match `.authenticationFailed` for auth UX (MailTriage's classifier does
 exactly this) and silently miss the actual server rejection.
 
-Recommendation: reshape to `authenticationFailed(IMAPServerResponse?)` and have the
-auth path map a `NO`/`BAD` completion of LOGIN/AUTHENTICATE into it (response carried;
-`nil` for local failures, or keep a message string alongside). The semantic accessor
-`isAuthenticationFailure` remains useful for rejections outside the auth flow.
+Recommendation (reworked after independent review): reshape to
+`authenticationFailed(String, response: IMAPServerResponse?)`. The `String` keeps the
+existing local-failure detail (encoding failures, nil SASL handler response, with
+`response: nil`); the auth path maps a `NO`/`BAD` completion of LOGIN/AUTHENTICATE
+into the same case with the server response carried. Auth UX consumers match one
+case and lose nothing. The semantic accessor `isAuthenticationFailure` remains useful
+for rejections outside the auth flow.
 MailTriage cost: inside the switch arm it already has.
 
 ### B. Over-exposed wire layer
@@ -350,13 +354,139 @@ For the README / release notes once changes land:
 5. `connect()` is now idempotent; `appendMessage` returns the new UID where the
    server supports UIDPLUS
 
-## Suggested implementation order
+## Implementation order (revised per Decisions below)
 
 1. A1-A5 (error surface) — one PR, extends #27, includes RetryHandler dead branches
-2. B1-B4 + G2 (internalise wire layer, MimeBody, Sendable) — one PR
-3. C1-C3 + A4 tests (connection lifecycle/resilience) — one PR, the riskiest; needs
-   GreenMail coverage
-4. D1-D5 (footguns and round-trips) — one or two PRs
-5. E1-E3 (additive workaround knockouts) — one PR
-6. F1-F2 (surface trim) — one PR, mostly deletions + README/Examples updates
-7. Migration guide + CHANGELOG consolidation + enum-policy README note — final PR
+2. D1-D3 + D5 (footguns and the per-move CAPABILITY round trip) — one PR
+3. C1 (idempotent `connect()`) — own PR, needs GreenMail coverage
+4. B4 + G2 (MimeBody internalisation, Sendable) — one PR
+5. F2 + `searchMessagesComplex` removal (surface trim) — one PR, deletions +
+   README/Examples updates
+6. Migration guide + CHANGELOG consolidation + enum-policy README note — final PR
+
+---
+
+## Independent review notes
+
+The review is mostly sound, but it overstates the urgency of several items. I would
+separate "must fix before v2.0" from "nice cleanup while the surface is already
+moving."
+
+### Poorly considered / too broad
+
+1. **B1-B3: internalising the whole wire layer**
+
+   The argument is MailTriage-centric: "unused by known consumers". For a public IMAP
+   package, `IMAPParser`, `IMAPEncoder`, `IMAPResponse`, and `IMAPCommand.Command`
+   may plausibly be useful for diagnostics, testing servers, proxies, or advanced
+   clients. Removing them from public API is defensible, but the doc treats it as
+   obvious. I would either keep them public but mark them as low-level/unstable in
+   docs, or move this to a separate deliberate API-positioning decision.
+
+2. **F1: removing convenience search wrappers**
+
+   This feels unnecessary. The wrappers in `IMAPClient+Search.swift` are small and
+   user-friendly. Removing them saves little maintenance and makes the API less
+   approachable. `searchMessagesComplex` is uglier and could go, but deleting all
+   convenience methods because MailTriage does not use them is too aggressive.
+
+3. **E2: UIDVALIDITY guard on write operations**
+
+   The goal is valid, but the "atomically and for free" claim is overstated. The
+   library SELECTs before writes today, yes, but adding `expectedUIDValidity` to many
+   write APIs expands the API and requires careful semantics around selected mailbox
+   state, reconnects, and servers that omit or behave oddly. This is useful, not
+   obviously v2-blocking.
+
+4. **C2: uniform retry/reconnect across writes**
+
+   The doc correctly notes ambiguity for writes, but the proposed "provably
+   pre-execution" split is non-trivial. Today `sendCommandInternal` registers pending
+   commands before write completion, and write failure handling is low-level. Building
+   a correct sent/not-sent retry contract is worthwhile, but risky enough that I would
+   not bundle it into an API cleanup unless there are failing production cases.
+
+5. **E3: `appendMessage` returning UID**
+
+   Additive and useful, but not necessary for v2. It depends on parsing APPENDUID
+   response codes correctly and deciding what to return when UIDPLUS is absent. Fine
+   for v2.x. Not a release blocker.
+
+6. **G1: add `Equatable`/`Hashable` "for tidiness"**
+
+   Harmless, but explicitly not urgent. Additive conformances can land later. I would
+   not spend release focus here unless tests need them.
+
+7. **A5: `authenticationFailed(IMAPServerResponse?)` shape**
+
+   The problem is real: LOGIN/AUTHENTICATE rejection currently emerges as
+   `commandFailed`. But changing local auth failures from a useful `String` to `nil`
+   risks losing detail. Better shape would be something like
+   `authenticationFailed(String, response: IMAPServerResponse?)`, or keep
+   `commandFailed` plus add an `isAuthenticationFailure` classifier. The suggested
+   shape is under-specified.
+
+### Strong suggestions I agree with
+
+- **D1 is the most important fix.** Falling back from targeted `UID EXPUNGE` to
+  whole-mailbox `EXPUNGE` is a real data-loss footgun.
+- **D2 should follow D1.** `deleteMessages` loops per UID and then calls
+  whole-mailbox expunge.
+- **D3 is valid.** `SequenceSet.set([])` returning UID `0` is a bad public trap.
+- **A1-A4 are reasonable.** The error cleanup and reconnect classification are
+  coherent, especially since `requiresReconnection` excludes `.disconnected` today.
+- **D5 is cheap and worthwhile.** `moveMessage(s)` paying a network `CAPABILITY` each
+  time is unnecessary after capabilities are cached.
+- **B4 is reasonable.** Publicly exposing `MimeBody` leaks a dependency type.
+
+### Suggested priority
+
+For v2.0: do A1-A4, D1-D3, D5, B4, maybe C1.
+
+Defer: B1-B3, C2, E2, E3, G1, most of F1.
+
+Rework before accepting: A5 and the enum-policy claim that consumers "must" include
+default arms. That is guidance, not something the library can enforce cleanly for
+Swift package enums.
+
+---
+
+## Decisions (2026-06-06, post-review)
+
+Independent review accepted; loose ends resolved as follows.
+
+### In scope for v2.0
+
+- **A1–A4** — error-case cleanup and reconnect classification (with regression test)
+- **A5** — reworked shape: `authenticationFailed(String, response: IMAPServerResponse?)`
+  (recommendation above updated to match)
+- **B4 + G2** — internalise `MimePart.body`, then make `ParsedMimeMessage`/`MimePart`
+  `Sendable` (G2 becomes trivial once B4 lands; bundled in one PR)
+- **C1** — idempotent `connect()`: cheapest part of the resilience story, direct
+  driver of the MailTriage rebuild workaround, and unlike C2 carries no
+  write-idempotency risk
+- **D1–D3, D5** — footguns and the per-move CAPABILITY round trip
+- **F1 (partial)** — remove `searchMessagesComplex` only; the simple wrappers stay
+- **F2** — remove deprecated `listMessages` and `fetchMessageBySequence` (a major is
+  the only clean removal point; the latter gets no deprecation grace because it has
+  the same instability problem and no known consumer)
+- Migration guide, CHANGELOG consolidation, enum-policy guidance in README (reworded
+  per review: guidance, not enforcement)
+
+### Deferred
+
+- **B1–B3** (wire-layer internalisation) — needs a deliberate API-positioning
+  decision for the public package, not a side effect of this review
+- **C2** (uniform write retry) — correct sent/not-sent contract is non-trivial;
+  revisit if production failures demand it
+- **C3** (bounded LOGOUT in `disconnect()`), **D4** (batch fetch in
+  `searchMessages`), **E1** (`referenceIDs`), **E2** (UIDVALIDITY guard),
+  **E3** (APPENDUID return) — all non-breaking; no major required, land in v2.x
+  as needed
+- **G1** (Equatable/Hashable), **G3** (NIOSSL wrapping), rest of **F1** — v2.x/v3.0
+
+### Migration-guide impact
+
+Items 2 and 3 of the draft migration guide shrink accordingly (wire types stay
+public; only `searchMessagesComplex`, `listMessages`, and `fetchMessageBySequence`
+are removed; `appendMessage` keeps its current signature).
