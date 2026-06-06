@@ -134,7 +134,8 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         XCTAssertTrue(results.isEmpty)
 
         let commands = mockServer.receivedCommands.map { $0.uppercased() }
-        XCTAssertTrue(commands.contains { $0.contains("SEARCH") && $0.contains("CHARSET") })
+        XCTAssertTrue(commands.contains { $0.contains("UID SEARCH") && $0.contains("CHARSET") },
+                      "Charset must propagate on the UID SEARCH command")
         XCTAssertTrue(commands.contains { $0.contains("UTF-8") })
 
         await client.disconnect()
