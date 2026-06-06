@@ -106,10 +106,10 @@ final class IMAPConnectIdempotencyTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// A failed connect attempt must not leave a half-established session
-    /// (PR #52 review): STARTTLS unsupported throws AFTER the channel is up;
-    /// without teardown the live channel makes the next attempt die on
-    /// invalidState instead of re-attempting.
+    /// A failed connect attempt must not leave a half-established session:
+    /// STARTTLS-unsupported throws AFTER the channel is up, and without
+    /// teardown the live channel makes the next attempt die on invalidState
+    /// instead of re-attempting with a fresh connection.
     func testFailedStartTLSConnectTearsDownAndAllowsRetry() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
 
@@ -133,7 +133,7 @@ final class IMAPConnectIdempotencyTests: XCTestCase {
         }
     }
 
-    /// The security case (PR #52 review): a PREAUTH greeting under .startTLS
+    /// The security-critical teardown case: a PREAUTH greeting under .startTLS
     /// throws with the actor already in .authenticated state. Without teardown,
     /// isHealthy() would make the NEXT connect() a silent no-op on an
     /// unencrypted session whose establishment was rejected.
