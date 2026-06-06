@@ -41,6 +41,10 @@ actor ConnectCoordinator {
         // Actor serialisation guarantees this fires before any later caller can
         // enter run(): there is no suspension point between task.value resolving
         // and the defer, so a completed task is never observed as in-flight.
+        // Cancelling the awaiting caller cannot fire this early either:
+        // Task.value is not responsive to the awaiter's cancellation — it waits
+        // for the task to complete regardless — so inFlight is never cleared
+        // while the attempt is still running (verified empirically).
         defer { inFlight = nil }
         try await task.value
     }
