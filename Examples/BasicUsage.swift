@@ -50,7 +50,7 @@ struct BasicUsageExample {
             
             // Search for recent messages
             print("\n🔍 Searching for messages...")
-            let messageUIDs = try await client.listMessages(
+            let messageUIDs = try await client.listMessageUIDs(
                 in: "INBOX",
                 searchCriteria: .all
             )
