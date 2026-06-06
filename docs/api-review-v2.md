@@ -490,3 +490,39 @@ Independent review accepted; loose ends resolved as follows.
 Items 2 and 3 of the draft migration guide shrink accordingly (wire types stay
 public; only `searchMessagesComplex`, `listMessages`, and `fetchMessageBySequence`
 are removed; `appendMessage` keeps its current signature).
+
+---
+
+## Decisions, second pass (2026-06-06, after PRs #41-#45)
+
+Scope revisited once the first wave was implemented and reviewed.
+
+### Added to v2.0
+
+- **C2 (read side only)** — `fetchMessageBody` gets the full retry/reconnect
+  wrapper like `fetchMessage`. Writes remain out of scope (sent-vs-not-sent
+  ambiguity stands).
+- **C3** — bounded `LOGOUT` in `disconnect()` instead of waiting out
+  `commandTimeout` on a dead channel.
+- **D4** — batch the N+1 sequential fetch in `searchMessages` into a single
+  `UID FETCH` with a sequence set.
+- **E1** — `MessageSummary.referenceIDs: [String]` (parsed message-IDs;
+  raw `references` retained).
+- **E2** — optional `expectedUIDValidity:` parameter on write operations,
+  enforced at SELECT time.
+- **G1** — add missing `Equatable`/`Hashable` conformances now.
+- **B3 note carried into release prep**: with `IMAPCommand.Command` staying
+  public, reword the CHANGELOG `label` entry so `IMAPServerResponse.commandName`
+  is presented as the supported way to learn which command failed, with `label`
+  as the underlying plumbing.
+
+### Confirmed deferred
+
+- **B1-B3** — wire-layer internalisation stays out (API-positioning decision,
+  per the independent review).
+- **C2 (writes)** — out of scope as before.
+- **E3** — APPENDUID return on `appendMessage`: tracked as an issue rather than
+  implemented in v2.0 (depends on correct APPENDUID response-code parsing and a
+  decision on the no-UIDPLUS return shape).
+- **G3** — NIOSSL wrapping: tracked as an issue, scoped to the v3.0 / Swift 6
+  pass.
