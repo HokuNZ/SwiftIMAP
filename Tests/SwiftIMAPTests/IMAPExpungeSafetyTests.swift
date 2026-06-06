@@ -1,0 +1,181 @@
+import XCTest
+@testable import SwiftIMAP
+import NIO
+
+/// Tests for the expunge/delete footgun fixes and the cached-capability gating
+/// (issue #36): a targeted expunge must never silently widen to a whole-mailbox
+/// `EXPUNGE`, deletes batch their STORE, and capability-gated operations read
+/// the cached capability set instead of issuing CAPABILITY per call.
+final class IMAPExpungeSafetyTests: XCTestCase {
+    private var eventLoopGroup: MultiThreadedEventLoopGroup!
+    private var mockServer: MockIMAPServer!
+    private var serverPort: Int!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        mockServer = MockIMAPServer(eventLoopGroup: eventLoopGroup)
+        serverPort = try await mockServer.start()
+    }
+
+    override func tearDown() async throws {
+        if let mockServer {
+            try await mockServer.shutdown()
+            self.mockServer = nil
+        }
+        if let eventLoopGroup {
+            try await eventLoopGroup.shutdownGracefully()
+            self.eventLoopGroup = nil
+        }
+        serverPort = nil
+        try await super.tearDown()
+    }
+
+    private func makeClient(capabilities: String) async throws -> IMAPClient {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY \(capabilities)")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+        let client = IMAPClient(configuration: config)
+        try await client.connect()
+        return client
+    }
+
+    /// Without UIDPLUS, a targeted expunge must throw rather than fall back to a
+    /// whole-mailbox EXPUNGE (which would delete every \Deleted message, not just
+    /// the named UIDs).
+    func testTargetedExpungeWithoutUIDPLUSThrows() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+
+        do {
+            try await client.expunge(uids: [7, 9], in: "INBOX")
+            XCTFail("Expected expunge(uids:) to throw without UIDPLUS")
+        } catch IMAPError.unsupportedCapability(let capability) {
+            XCTAssertEqual(capability, "UIDPLUS")
+        }
+
+        let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
+        XCTAssertTrue(expunges.isEmpty, "No EXPUNGE of any kind may reach the server: \(expunges)")
+
+        await client.disconnect()
+    }
+
+    /// With UIDPLUS, a targeted expunge sends UID EXPUNGE with the named UIDs only.
+    func testTargetedExpungeWithUIDPLUSSendsUIDExpunge() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN UIDPLUS")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        try await client.expunge(uids: [7, 9], in: "INBOX")
+
+        let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
+        XCTAssertEqual(expunges.count, 1)
+        XCTAssertTrue(expunges[0].uppercased().contains("UID EXPUNGE 7,9"),
+                      "Expected a targeted UID EXPUNGE, got: \(expunges[0])")
+
+        await client.disconnect()
+    }
+
+    /// deleteMessages issues one batched STORE for all UIDs (not one per UID) and
+    /// routes through the UID-safe expunge.
+    func testDeleteMessagesBatchesStoreAndUsesUIDExpunge() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN UIDPLUS")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        try await client.deleteMessages(uids: [3, 5, 8], in: "INBOX")
+
+        let stores = mockServer.receivedCommands.filter { $0.uppercased().contains("UID STORE") }
+        XCTAssertEqual(stores.count, 1, "Expected one batched STORE, got: \(stores)")
+        XCTAssertTrue(stores[0].uppercased().contains("3,5,8"), "STORE should carry all UIDs: \(stores[0])")
+
+        let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
+        XCTAssertEqual(expunges.count, 1)
+        XCTAssertTrue(expunges[0].uppercased().contains("UID EXPUNGE 3,5,8"),
+                      "Expected a targeted UID EXPUNGE, got: \(expunges[0])")
+
+        await client.disconnect()
+    }
+
+    /// deleteMessages must also refuse to run without UIDPLUS, before storing any
+    /// \Deleted flags it could not safely expunge.
+    func testDeleteMessagesWithoutUIDPLUSThrows() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        do {
+            try await client.deleteMessages(uids: [3, 5], in: "INBOX")
+            XCTFail("Expected deleteMessages to throw without UIDPLUS")
+        } catch IMAPError.unsupportedCapability(let capability) {
+            XCTAssertEqual(capability, "UIDPLUS")
+        }
+
+        let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
+        XCTAssertTrue(expunges.isEmpty, "No EXPUNGE may reach the server: \(expunges)")
+
+        await client.disconnect()
+    }
+
+    /// moveMessages gates on the cached capability set: no CAPABILITY command is
+    /// issued per move. connect() itself issues exactly two (pre- and post-auth).
+    func testMoveDoesNotIssueCapabilityPerCall() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN MOVE")
+        mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
+
+        let capabilityCountAfterConnect = mockServer.receivedCommands
+            .filter { $0.uppercased().contains("CAPABILITY") }.count
+
+        try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive")
+        try await client.moveMessages(uids: [6], from: "INBOX", to: "Archive")
+
+        let capabilityCountAfterMoves = mockServer.receivedCommands
+            .filter { $0.uppercased().contains("CAPABILITY") }.count
+        XCTAssertEqual(capabilityCountAfterMoves, capabilityCountAfterConnect,
+                       "Moves must not issue CAPABILITY commands")
+
+        let moves = mockServer.receivedCommands.filter { $0.uppercased().contains("UID MOVE") }
+        XCTAssertEqual(moves.count, 2)
+
+        await client.disconnect()
+    }
+
+    /// The MOVE-capability check still works from the cache: a server without
+    /// MOVE gets the COPY + \Deleted fallback, with no per-move CAPABILITY.
+    func testMoveFallsBackToCopyFromCachedCapabilities() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "UID COPY", response: "OK Copy completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        let capabilityCountAfterConnect = mockServer.receivedCommands
+            .filter { $0.uppercased().contains("CAPABILITY") }.count
+
+        try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive")
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID COPY") }, "Expected COPY fallback")
+        XCTAssertTrue(commands.contains { $0.contains("UID STORE") && $0.contains("\\DELETED") },
+                      "Expected \\Deleted store fallback")
+
+        let capabilityCountAfterMove = mockServer.receivedCommands
+            .filter { $0.uppercased().contains("CAPABILITY") }.count
+        XCTAssertEqual(capabilityCountAfterMove, capabilityCountAfterConnect)
+
+        await client.disconnect()
+    }
+
+    /// connect() refreshes capabilities once after authentication, so the cache
+    /// reflects the post-auth capability set that gates MOVE/UIDPLUS.
+    func testConnectRefreshesCapabilitiesPostAuth() async throws {
+        _ = try await makeClient(capabilities: "IMAP4rev1 LOGIN MOVE UIDPLUS")
+
+        let capabilityCommands = mockServer.receivedCommands
+            .filter { $0.uppercased().contains("CAPABILITY") }
+        XCTAssertEqual(capabilityCommands.count, 2,
+                       "connect() should issue CAPABILITY pre-auth and once post-auth, got: \(capabilityCommands)")
+    }
+}

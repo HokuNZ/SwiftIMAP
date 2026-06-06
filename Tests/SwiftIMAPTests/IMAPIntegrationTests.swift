@@ -593,31 +593,6 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testExpungeFallsBackWithoutUidPlus() async throws {
-        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
-        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
-        mockServer.setResponse(for: "EXPUNGE", response: "OK EXPUNGE completed")
-
-        let config = IMAPConfiguration(
-            hostname: "localhost",
-            port: serverPort,
-            tlsMode: .disabled,
-            authMethod: .login(username: "testuser", password: "testpass")
-        )
-
-        let client = IMAPClient(configuration: config)
-
-        try await client.connect()
-        try await client.expunge(uids: [3], in: "INBOX")
-
-        let commands = mockServer.receivedCommands.map { $0.uppercased() }
-        XCTAssertTrue(commands.contains { $0.contains("EXPUNGE") && !$0.contains("UID EXPUNGE") })
-        XCTAssertFalse(commands.contains { $0.contains("UID EXPUNGE") })
-
-        await client.disconnect()
-    }
-
     func testMoveMessagesUsesUidMoveWhenSupported() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 MOVE")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")

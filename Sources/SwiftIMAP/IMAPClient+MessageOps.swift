@@ -141,8 +141,9 @@ extension IMAPClient {
     /// Move a message to another mailbox (if server supports MOVE extension)
     /// Falls back to COPY + mark as deleted if MOVE is not supported
     public func moveMessage(uid: UID, from sourceMailbox: String, to destinationMailbox: String) async throws {
-        // Check if server supports MOVE extension
-        let capabilities = try await capability()
+        // Capability-gate on the cached set (refreshed post-auth by connect())
+        // rather than paying a CAPABILITY round trip per move.
+        let capabilities = await connection.getCapabilities()
         if capabilities.contains("MOVE") {
             _ = try await selectMailbox(sourceMailbox)
 
@@ -160,8 +161,8 @@ extension IMAPClient {
     public func moveMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String) async throws {
         guard !uids.isEmpty else { return }
 
-        // Check if server supports MOVE extension
-        let capabilities = try await capability()
+        // Capability-gate on the cached set, as in moveMessage(uid:from:to:).
+        let capabilities = await connection.getCapabilities()
         if capabilities.contains("MOVE") {
             _ = try await selectMailbox(sourceMailbox)
 
@@ -185,34 +186,43 @@ extension IMAPClient {
         _ = try await connection.sendCommand(.expunge)
     }
 
-    /// Permanently delete specific messages, using UID EXPUNGE when supported.
+    /// Permanently delete specific messages via `UID EXPUNGE`.
+    ///
+    /// - Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does
+    ///   not support UIDPLUS. A targeted expunge is impossible without it, and
+    ///   falling back to a whole-mailbox `EXPUNGE` would permanently delete every
+    ///   `\Deleted` message in the mailbox — not just the named UIDs. Use
+    ///   ``expunge(mailbox:)`` if whole-mailbox expunge is actually what you want.
     public func expunge(uids: [UID], in mailbox: String) async throws {
         guard !uids.isEmpty else { return }
 
         _ = try await selectMailbox(mailbox)
 
-        let capabilities = try await capability()
-        if capabilities.contains("UIDPLUS") {
-            let sequence = IMAPCommand.SequenceSet.set(uids)
-            _ = try await connection.sendCommand(.uid(.expunge(sequence: sequence)))
-        } else {
-            _ = try await connection.sendCommand(.expunge)
+        let capabilities = await connection.getCapabilities()
+        guard capabilities.contains("UIDPLUS") else {
+            throw IMAPError.unsupportedCapability("UIDPLUS")
         }
+
+        let sequence = IMAPCommand.SequenceSet.set(uids)
+        _ = try await connection.sendCommand(.uid(.expunge(sequence: sequence)))
     }
 
-    /// Delete a message (mark as deleted and expunge)
+    /// Delete a message (mark as deleted, then `UID EXPUNGE` it).
+    ///
+    /// - Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does
+    ///   not support UIDPLUS (see ``expunge(uids:in:)``).
     public func deleteMessage(uid: UID, in mailbox: String) async throws {
-        try await markForDeletion(uid: uid, in: mailbox)
-        try await expunge(mailbox: mailbox)
+        try await deleteMessages(uids: [uid], in: mailbox)
     }
 
-    /// Delete multiple messages
+    /// Delete multiple messages (one batched STORE, then `UID EXPUNGE`).
+    ///
+    /// - Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does
+    ///   not support UIDPLUS (see ``expunge(uids:in:)``).
     public func deleteMessages(uids: [UID], in mailbox: String) async throws {
         guard !uids.isEmpty else { return }
 
-        for uid in uids {
-            try await markForDeletion(uid: uid, in: mailbox)
-        }
-        try await expunge(mailbox: mailbox)
+        try await storeFlags(uids: uids, in: mailbox, flags: [.deleted], action: .add)
+        try await expunge(uids: uids, in: mailbox)
     }
 }
