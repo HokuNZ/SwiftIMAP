@@ -97,6 +97,12 @@ extension IMAPClient {
 
         if !preauthenticated {
             try await self.authenticate()
+            // Servers often advertise a reduced capability set before
+            // authentication (and not all re-announce in the LOGIN/AUTHENTICATE
+            // completion), so refresh once here. Capability-gated operations
+            // (MOVE, UID EXPUNGE) read the cached set instead of paying a
+            // CAPABILITY round trip per call.
+            _ = try await self.capability()
         }
     }
 
