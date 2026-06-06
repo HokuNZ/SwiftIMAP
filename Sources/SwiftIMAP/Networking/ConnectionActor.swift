@@ -289,7 +289,14 @@ actor ConnectionActor {
     }
     
     private func updateCapabilities(_ caps: Set<String>) async {
-        serverCapabilities = caps
+        serverCapabilities = ConnectionActor.normalised(caps)
+    }
+
+    /// IMAP capability tokens are case-insensitive (RFC 3501 §7.2.1); normalise
+    /// to upper case at the cache boundary so every gate (`MOVE`, `UIDPLUS`,
+    /// `LITERAL+`, `SASL-IR`, ...) can compare against upper-case literals.
+    private static func normalised(_ caps: some Sequence<String>) -> Set<String> {
+        Set(caps.map { $0.uppercased() })
     }
     
     private func setupChannelPipeline(channel: Channel, handler: IMAPChannelHandler) -> EventLoopFuture<Void> {
@@ -494,7 +501,7 @@ actor ConnectionActor {
         case .untagged(let untagged):
             switch untagged {
             case .capability(let caps):
-                serverCapabilities = Set(caps)
+                serverCapabilities = ConnectionActor.normalised(caps)
             case .status(let status):
                 updateCapabilitiesIfPresent(status)
                 if case .bye(let code, let text) = status {
@@ -713,7 +720,7 @@ private extension ConnectionActor {
         }
         
         if case .capability(let caps) = code {
-            serverCapabilities = Set(caps)
+            serverCapabilities = ConnectionActor.normalised(caps)
         }
     }
 }

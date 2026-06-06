@@ -63,6 +63,11 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
         XCTAssertTrue(expunges.isEmpty, "No EXPUNGE of any kind may reach the server: \(expunges)")
 
+        // The guard fires before SELECT: a doomed call must not change the
+        // selected-mailbox state as a side effect.
+        let selects = mockServer.receivedCommands.filter { $0.uppercased().contains("SELECT") }
+        XCTAssertTrue(selects.isEmpty, "No SELECT may reach the server: \(selects)")
+
         await client.disconnect()
     }
 
@@ -122,6 +127,10 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         // \Deleted flags set with no safe targeted expunge to follow.
         let stores = mockServer.receivedCommands.filter { $0.uppercased().contains("STORE") }
         XCTAssertTrue(stores.isEmpty, "No STORE may reach the server: \(stores)")
+
+        // And before SELECT, so the doomed call has no selected-mailbox side effect.
+        let selects = mockServer.receivedCommands.filter { $0.uppercased().contains("SELECT") }
+        XCTAssertTrue(selects.isEmpty, "No SELECT may reach the server: \(selects)")
 
         await client.disconnect()
     }
@@ -206,6 +215,26 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         XCTAssertTrue(commands.contains { $0.contains("UID MOVE") },
                       "Expected UID MOVE gated on the post-auth capability set")
         XCTAssertFalse(commands.contains { $0.contains("UID COPY") })
+
+        await client.disconnect()
+    }
+
+    /// Capability tokens are case-insensitive (RFC 3501): a server advertising
+    /// lowercase tokens must still gate MOVE/UIDPLUS correctly (PR #42 review).
+    func testLowercaseCapabilityTokensGateCorrectly() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN move uidplus")
+        mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive")
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID MOVE") },
+                      "Lowercase 'move' capability must still select UID MOVE")
+        XCTAssertFalse(commands.contains { $0.contains("UID COPY") })
+
+        try await client.expunge(uids: [7], in: "INBOX")
+        XCTAssertTrue(mockServer.receivedCommands.contains { $0.uppercased().contains("UID EXPUNGE") },
+                      "Lowercase 'uidplus' capability must still allow targeted expunge")
 
         await client.disconnect()
     }
