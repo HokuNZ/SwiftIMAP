@@ -38,6 +38,9 @@ actor ConnectCoordinator {
         }
         let task = Task { try await work() }
         inFlight = task
+        // Actor serialisation guarantees this fires before any later caller can
+        // enter run(): there is no suspension point between task.value resolving
+        // and the defer, so a completed task is never observed as in-flight.
         defer { inFlight = nil }
         try await task.value
     }
@@ -52,6 +55,11 @@ extension IMAPClient {
     ///   reconnects and re-authenticates;
     /// - concurrent calls coalesce onto a single attempt — the second caller
     ///   awaits the in-flight attempt instead of failing with `invalidState`.
+    ///
+    /// - Note: the coalescing guarantee covers concurrent `connect()` calls
+    ///   only. Calling `disconnect()` while a `connect()` attempt is in flight
+    ///   races it at the connection layer and the attempt may fail; serialise
+    ///   connect/disconnect pairs in the caller if that ordering matters.
     public func connect() async throws {
         try await connectCoordinator.run { [self] in
             if await connection.isHealthy() {
