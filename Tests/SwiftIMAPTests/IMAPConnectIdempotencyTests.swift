@@ -74,8 +74,14 @@ final class IMAPConnectIdempotencyTests: XCTestCase {
         do {
             _ = try await client.selectMailbox("INBOX")
             XCTFail("Expected the hang-up to fail SELECT")
-        } catch IMAPError.connectionClosed(nil) {
-            // expected: abrupt drop, no server response
+        } catch let error as IMAPError {
+            // The drop arrives with no tagged completion; any connectionClosed
+            // shape is acceptable here — the contract under test is the
+            // reconnect below, not the precise drop error.
+            guard case .connectionClosed = error else {
+                XCTFail("Expected connectionClosed, got: \(error)")
+                return
+            }
         }
 
         try await client.connect()
@@ -96,6 +102,34 @@ final class IMAPConnectIdempotencyTests: XCTestCase {
 
         try await client.connect()
         XCTAssertEqual(loginCount, 2)
+
+        await client.disconnect()
+    }
+
+    /// Concurrent reconnects after a drop coalesce too — the practical case
+    /// (e.g. several in-flight operations all hitting the same dead connection
+    /// and racing to re-establish): one fresh LOGIN, no invalidState.
+    func testConcurrentReconnectsAfterDropCoalesce() async throws {
+        let client = makeClient()
+        mockServer.setResponse(for: "SELECT", response: "* 1 EXISTS")
+        mockServer.closeOnceAfterResponse(toCommandContaining: "SELECT")
+
+        try await client.connect()
+        do {
+            _ = try await client.selectMailbox("INBOX")
+            XCTFail("Expected the hang-up to fail SELECT")
+        } catch {
+            // expected: connection dropped
+        }
+
+        async let first: Void = client.connect()
+        async let second: Void = client.connect()
+        _ = try await (first, second)
+
+        XCTAssertEqual(loginCount, 2, "One LOGIN from the initial connect, one from the coalesced reconnect")
+
+        let status = try await client.selectMailbox("INBOX")
+        XCTAssertEqual(status.messages, 1)
 
         await client.disconnect()
     }
