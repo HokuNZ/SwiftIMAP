@@ -374,7 +374,7 @@ final class IMAPIntegrationTests: XCTestCase {
         } catch {
             if let imapError = error as? IMAPError {
                 switch imapError {
-                case .timeout, .connectionFailed, .connectionError:
+                case .timeout, .connectionFailed:
                     break
                 default:
                     XCTFail("Unexpected error: \(imapError)")

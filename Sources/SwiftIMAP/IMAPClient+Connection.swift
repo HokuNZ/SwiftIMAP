@@ -108,7 +108,14 @@ extension IMAPClient {
             throw IMAPError.unsupportedCapability("LOGINDISABLED")
         }
 
-        _ = try await connection.sendCommand(.login(username: username, password: password))
+        do {
+            _ = try await connection.sendCommand(.login(username: username, password: password))
+        } catch IMAPError.commandFailed(let response) {
+            // A NO/BAD completion of LOGIN is an authentication failure, not a
+            // generic command failure: surface it as such, carrying the server
+            // response so callers can inspect the code and text.
+            throw IMAPError.authenticationFailed("Server rejected LOGIN", response: response)
+        }
         await connection.setAuthenticated()
     }
 
@@ -125,17 +132,23 @@ extension IMAPClient {
             responseHandler: responseHandler
         )
 
-        _ = try await connection.sendCommand(
-            .authenticate(mechanism: mechanism, initialResponse: commandInitialResponse),
-            continuationHandler: continuationHandler
-        )
+        do {
+            _ = try await connection.sendCommand(
+                .authenticate(mechanism: mechanism, initialResponse: commandInitialResponse),
+                continuationHandler: continuationHandler
+            )
+        } catch IMAPError.commandFailed(let response) {
+            // As with LOGIN: a NO/BAD completion of AUTHENTICATE is an
+            // authentication failure carrying the server's response.
+            throw IMAPError.authenticationFailed("Server rejected AUTHENTICATE", response: response)
+        }
         await connection.setAuthenticated()
     }
 
     private func authenticatePlain(username: String, password: String) async throws {
         let authString = "\0\(username)\0\(password)"
         guard let authData = authString.data(using: .utf8) else {
-            throw IMAPError.authenticationFailed("Failed to encode credentials")
+            throw IMAPError.authenticationFailed("Failed to encode credentials", response: nil)
         }
 
         let base64Auth = authData.base64EncodedString()
@@ -150,7 +163,7 @@ extension IMAPClient {
     private func authenticateOAuth2(username: String, accessToken: String) async throws {
         let authString = "user=\(username)\u{01}auth=Bearer \(accessToken)\u{01}\u{01}"
         guard let authData = authString.data(using: .utf8) else {
-            throw IMAPError.authenticationFailed("Failed to encode OAuth2 credentials")
+            throw IMAPError.authenticationFailed("Failed to encode OAuth2 credentials", response: nil)
         }
 
         let base64Auth = authData.base64EncodedString()

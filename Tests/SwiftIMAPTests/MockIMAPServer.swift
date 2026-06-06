@@ -85,7 +85,7 @@ class MockIMAPServer {
         channel = try await bootstrap.bind(host: "localhost", port: 0).get()
         guard let localAddress = channel?.localAddress,
               let port = localAddress.port else {
-            throw IMAPError.connectionError("Failed to get server port")
+            throw IMAPError.connectionFailed("Failed to get server port", underlying: nil)
         }
 
         return port

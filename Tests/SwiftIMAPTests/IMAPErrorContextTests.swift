@@ -62,8 +62,15 @@ final class IMAPErrorContextTests: XCTestCase {
             XCTAssertFalse(reflected.contains("hunter2-secret"),
                            "Password leaked into reflected error: \(reflected)")
 
-            guard case .commandFailed(let response) = error else {
-                XCTFail("Expected commandFailed, got: \(error)")
+            // A server-rejected LOGIN surfaces as authenticationFailed (not the
+            // generic commandFailed), carrying the server response (#35 / A5).
+            guard case .authenticationFailed(let message, let response) = error else {
+                XCTFail("Expected authenticationFailed, got: \(error)")
+                return
+            }
+            XCTAssertEqual(message, "Server rejected LOGIN")
+            guard let response else {
+                XCTFail("Expected the server response to be carried")
                 return
             }
             XCTAssertEqual(response.status, .no)
@@ -72,6 +79,36 @@ final class IMAPErrorContextTests: XCTestCase {
             XCTAssertEqual(response.text, "Invalid credentials")
             XCTAssertEqual(response.line, "NO [AUTHENTICATIONFAILED] Invalid credentials")
             XCTAssertTrue(response.isAuthenticationFailure)
+        }
+    }
+
+    /// A server-rejected AUTHENTICATE (here SASL PLAIN with SASL-IR) also surfaces
+    /// as authenticationFailed carrying the server response (#35 / A5).
+    func testRejectedAuthenticateSurfacesAsAuthenticationFailed() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN")
+        mockServer.setAuthenticateResponse("NO [AUTHENTICATIONFAILED] Authentication rejected")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .plain(username: "testuser", password: "wrongpass")
+        )
+        let client = IMAPClient(configuration: config)
+
+        do {
+            try await client.connect()
+            XCTFail("Expected AUTHENTICATE to be rejected")
+        } catch let error as IMAPError {
+            guard case .authenticationFailed(let message, let response) = error else {
+                XCTFail("Expected authenticationFailed, got: \(error)")
+                return
+            }
+            XCTAssertEqual(message, "Server rejected AUTHENTICATE")
+            XCTAssertEqual(response?.status, .no)
+            XCTAssertEqual(response?.commandName, "AUTHENTICATE")
+            XCTAssertEqual(response?.code, .other("AUTHENTICATIONFAILED", nil))
+            XCTAssertTrue(response?.isAuthenticationFailure ?? false)
         }
     }
 
