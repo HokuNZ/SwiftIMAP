@@ -196,12 +196,14 @@ extension IMAPClient {
     public func expunge(uids: [UID], in mailbox: String) async throws {
         guard !uids.isEmpty else { return }
 
-        _ = try await selectMailbox(mailbox)
-
+        // Guard before SELECT: a doomed call should not change the selected
+        // mailbox as a side effect.
         let capabilities = await connection.getCapabilities()
         guard capabilities.contains("UIDPLUS") else {
             throw IMAPError.unsupportedCapability("UIDPLUS")
         }
+
+        _ = try await selectMailbox(mailbox)
 
         let sequence = IMAPCommand.SequenceSet.set(uids)
         _ = try await connection.sendCommand(.uid(.expunge(sequence: sequence)))
@@ -221,6 +223,13 @@ extension IMAPClient {
     ///   not support UIDPLUS (see ``expunge(uids:in:)``).
     public func deleteMessages(uids: [UID], in mailbox: String) async throws {
         guard !uids.isEmpty else { return }
+
+        // Refuse before storing \Deleted: throwing only at the expunge step
+        // would leave the flags set with no safe targeted expunge to follow.
+        let capabilities = await connection.getCapabilities()
+        guard capabilities.contains("UIDPLUS") else {
+            throw IMAPError.unsupportedCapability("UIDPLUS")
+        }
 
         try await storeFlags(uids: uids, in: mailbox, flags: [.deleted], action: .add)
         try await expunge(uids: uids, in: mailbox)

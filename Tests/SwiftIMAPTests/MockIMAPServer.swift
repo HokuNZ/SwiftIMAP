@@ -16,6 +16,7 @@ class MockIMAPServer {
     private var channel: Channel?
 
     private var _responses: [String: String] = [:]
+    private var _responseSequences: [String: [String]] = [:]
     private var _authenticateResponse: String?
     private var _authenticateChallenges: [String] = []
     private var _pendingAuthTag: String?
@@ -44,6 +45,14 @@ class MockIMAPServer {
 
     func setResponse(for command: String, response: String) {
         lock.withLock { _responses[command] = response }
+    }
+
+    /// Register a sequence of responses for a command: each matching command
+    /// consumes the next entry; the last entry repeats once the rest are used.
+    /// Lets a test serve different CAPABILITY sets pre- and post-auth.
+    func setResponseSequence(for command: String, responses: [String]) {
+        precondition(!responses.isEmpty)
+        lock.withLock { _responseSequences[command] = responses }
     }
 
     /// After responding to a command whose line contains `keyword`, close the
@@ -165,6 +174,21 @@ class MockIMAPServer {
 
             _pendingAuthTag = tag
             return _responses["AUTHENTICATE \(mechanism)"] ?? "+"
+        }
+
+        if let key = _responseSequences.keys.first(where: {
+            commandAndArgs.uppercased().hasPrefix($0.uppercased()) || cmd == $0.uppercased()
+        }), var queue = _responseSequences[key] {
+            let response = queue.removeFirst()
+            if !queue.isEmpty {
+                _responseSequences[key] = queue
+            } else {
+                _responseSequences[key] = [response]  // last entry repeats
+            }
+            if response.hasPrefix("*") || response.hasPrefix("+") {
+                return "\(response)\r\n\(tag) OK \(cmd) completed"
+            }
+            return "\(tag) \(response)"
         }
 
         let prefixMatch = _responses.keys.first { key in

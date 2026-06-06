@@ -118,6 +118,11 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
         XCTAssertTrue(expunges.isEmpty, "No EXPUNGE may reach the server: \(expunges)")
 
+        // The guard must fire BEFORE the STORE: throwing after it would leave
+        // \Deleted flags set with no safe targeted expunge to follow.
+        let stores = mockServer.receivedCommands.filter { $0.uppercased().contains("STORE") }
+        XCTAssertTrue(stores.isEmpty, "No STORE may reach the server: \(stores)")
+
         await client.disconnect()
     }
 
@@ -169,13 +174,66 @@ final class IMAPExpungeSafetyTests: XCTestCase {
     }
 
     /// connect() refreshes capabilities once after authentication, so the cache
-    /// reflects the post-auth capability set that gates MOVE/UIDPLUS.
-    func testConnectRefreshesCapabilitiesPostAuth() async throws {
-        _ = try await makeClient(capabilities: "IMAP4rev1 LOGIN MOVE UIDPLUS")
+    /// reflects the post-auth capability set that gates MOVE/UIDPLUS — here the
+    /// server advertises a reduced set pre-auth and the full set post-auth.
+    func testConnectCachesPostAuthCapabilitySet() async throws {
+        mockServer.setResponseSequence(for: "CAPABILITY", responses: [
+            "* CAPABILITY IMAP4rev1 LOGIN",                 // pre-auth: no extensions
+            "* CAPABILITY IMAP4rev1 LOGIN MOVE UIDPLUS"     // post-auth: full set
+        ])
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+        let client = IMAPClient(configuration: config)
+        try await client.connect()
 
         let capabilityCommands = mockServer.receivedCommands
             .filter { $0.uppercased().contains("CAPABILITY") }
         XCTAssertEqual(capabilityCommands.count, 2,
                        "connect() should issue CAPABILITY pre-auth and once post-auth, got: \(capabilityCommands)")
+
+        // MOVE only appears in the post-auth set: the move succeeding via UID
+        // MOVE (not the COPY fallback) proves the post-auth set is cached.
+        try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive")
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID MOVE") },
+                      "Expected UID MOVE gated on the post-auth capability set")
+        XCTAssertFalse(commands.contains { $0.contains("UID COPY") })
+
+        await client.disconnect()
+    }
+
+    /// A PREAUTH session needs no separate refresh: the CAPABILITY command that
+    /// connect() issues after the greeting already runs in authenticated state,
+    /// so the cache holds the post-auth set. Pins the review question from #36.
+    func testPreauthSessionGatesOnAuthenticatedCapabilities() async throws {
+        mockServer.setResponse(for: "GREETING", response: "* PREAUTH IMAP4rev1")
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 MOVE UIDPLUS")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
+
+        let config = IMAPConfiguration(
+            hostname: "localhost",
+            port: serverPort,
+            tlsMode: .disabled,
+            authMethod: .login(username: "testuser", password: "testpass")
+        )
+        let client = IMAPClient(configuration: config)
+        try await client.connect()
+
+        try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive")
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID MOVE") },
+                      "PREAUTH session must gate MOVE on the fetched capability set")
+        XCTAssertFalse(commands.contains { $0.uppercased().contains("LOGIN") })
+
+        await client.disconnect()
     }
 }
