@@ -181,6 +181,37 @@ final class IMAPChannelHandlerTests: XCTestCase {
         XCTAssertEqual(secondCount, 1, "Response buffered while handler was nil should be delivered to new handler")
     }
 
+    /// Transport errors surfaced via errorCaught (TLS failures, read errors) are
+    /// terminal — the handler closes the channel — so they must arrive as a
+    /// typed, reconnectable IMAPError, not the raw NIO error, or they bypass
+    /// requiresReconnection (PR #41 review).
+    func testErrorCaughtWrapsTransportErrorAsReconnectable() throws {
+        struct TransportError: Error {}
+        let handler = makeHandler()
+        let channel = EmbeddedChannel(handler: handler)
+        defer { try? channel.finish() }
+
+        var failures: [Error] = []
+        handler.setResponseHandler { result in
+            if case .failure(let error) = result {
+                failures.append(error)
+            }
+        }
+
+        channel.pipeline.fireErrorCaught(TransportError())
+
+        // errorCaught dispatches first; the close it triggers then fires
+        // channelInactive, which dispatches connectionClosed(nil). The first
+        // failure is the one pending commands receive.
+        guard let imapError = failures.first as? IMAPError,
+              case .connectionFailed(_, let underlying) = imapError else {
+            return XCTFail("Expected connectionFailed wrapping the transport error, got: \(failures)")
+        }
+        XCTAssertTrue(underlying is TransportError, "The original error must be preserved as the underlying cause")
+        XCTAssertTrue(imapError.requiresReconnection,
+                      "A terminal transport error must be classified as reconnectable")
+    }
+
     /// Regression for #35 / A4: an abrupt connection drop (channelInactive with no
     /// server response) must surface as `connectionClosed(nil)`, which the retry
     /// layer classifies as reconnectable. Previously it surfaced as `.disconnected`,
