@@ -380,5 +380,18 @@ final class RetryHandlerTests: XCTestCase {
         XCTAssertFalse(IMAPError.commandFailed(
             IMAPServerResponse(status: .no, code: nil, text: "nope", commandName: "STORE")
         ).requiresReconnection)
+
+        // A BYE naming a definitive condition must NOT reconnect: doing so would
+        // replace the BYE reason with whatever the reconnect throws. A transient
+        // BYE ([UNAVAILABLE]) should reconnect, mirroring retry classification.
+        XCTAssertFalse(IMAPError.connectionClosed(
+            IMAPServerResponse(status: .bye, code: .alert, text: "Rejected", commandName: "CONNECT")
+        ).requiresReconnection)
+        XCTAssertTrue(IMAPError.connectionClosed(
+            IMAPServerResponse(status: .bye, code: .other("UNAVAILABLE", nil), text: "Restarting", commandName: "CONNECT")
+        ).requiresReconnection)
+
+        // Bad credentials must never trigger reconnect loops.
+        XCTAssertFalse(IMAPError.authenticationFailed("bad", response: nil).requiresReconnection)
     }
 }
