@@ -214,8 +214,11 @@ public struct MimePart: Sendable {
     /// Decoded content (transfer encoding removed), for attachments and text
     /// alike. `nil` when the body's transfer encoding could not be decoded.
     public let decodedData: Data?
-    /// The raw body as received, used as the text fallback when decoding fails.
-    let rawBody: String
+    /// The raw body as received — retained only when decoding failed, as the
+    /// text fallback for ``decodedText``. Empty after a successful decode, so a
+    /// large attachment does not hold its transfer-encoded form (e.g. the
+    /// base64 text) in memory alongside the decoded bytes.
+    private let rawBody: String
     /// Filename from the structured Content-Disposition header, if any.
     private let dispositionFilename: String?
     /// `name` parameter from the structured Content-Type header, if any.
@@ -231,8 +234,9 @@ public struct MimePart: Sendable {
         self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"] ?? headerTransferEncoding
         self.contentDisposition = headers["content-disposition"] ?? headerDisposition
         self.contentID = headers["content-id"]
-        self.decodedData = try? body.decodedContentData()
-        self.rawBody = body.raw
+        let decoded = try? body.decodedContentData()
+        self.decodedData = decoded
+        self.rawBody = decoded == nil ? body.raw : ""
         self.dispositionFilename = mime?.header.contentDisposition?.filename
         self.contentTypeName = mime?.header.contentType?.name
     }
