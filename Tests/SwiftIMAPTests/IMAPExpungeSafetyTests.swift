@@ -220,7 +220,8 @@ final class IMAPExpungeSafetyTests: XCTestCase {
     }
 
     /// Capability tokens are case-insensitive (RFC 3501): a server advertising
-    /// lowercase tokens must still gate MOVE/UIDPLUS correctly (PR #42 review).
+    /// lowercase tokens must still gate MOVE/UIDPLUS correctly. Tokens are
+    /// normalised to upper case at the capability-cache boundary.
     func testLowercaseCapabilityTokensGateCorrectly() async throws {
         let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN move uidplus")
         mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
@@ -239,9 +240,9 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// A PREAUTH session needs no separate refresh: the CAPABILITY command that
-    /// connect() issues after the greeting already runs in authenticated state,
-    /// so the cache holds the post-auth set. Pins the review question from #36.
+    /// A PREAUTH session needs no separate post-auth refresh: the CAPABILITY
+    /// command that connect() issues after the greeting already runs in
+    /// authenticated state, so the cache holds the post-auth set.
     func testPreauthSessionGatesOnAuthenticatedCapabilities() async throws {
         mockServer.setResponse(for: "GREETING", response: "* PREAUTH IMAP4rev1")
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 MOVE UIDPLUS")
