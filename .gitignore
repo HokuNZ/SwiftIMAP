@@ -14,9 +14,7 @@ Package.pins
 Package.resolved
 *.xcodeproj
 
-# Generated documentation (but keep docs/images for static assets)
-docs/*
-!docs/images/
+# Generated documentation
 .docc-build/
 
 # Temporary files
