@@ -45,7 +45,14 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         logger.log(level: .error, "Channel error: \(error)")
-        dispatch(.failure(error))
+        // We close the channel below, so this is terminal for the connection.
+        // Wrap transport-level errors (NIO/SSL) in a typed IMAPError that the
+        // retry layer classifies as reconnectable; dispatching the raw error
+        // would bypass requiresReconnection (which only matches IMAPError) and
+        // leave the operation failed without a reconnect attempt.
+        let imapError = error as? IMAPError
+            ?? IMAPError.connectionFailed(error.localizedDescription, underlying: error)
+        dispatch(.failure(imapError))
         context.close(promise: nil)
     }
 
