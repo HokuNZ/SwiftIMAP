@@ -30,7 +30,7 @@ extension MessageSummary {
 }
 
 /// A parsed MIME message with convenient access to parts
-public struct ParsedMimeMessage {
+public struct ParsedMimeMessage: Sendable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
@@ -200,45 +200,50 @@ public struct ParsedMimeMessage {
     }
 }
 
-/// A single MIME part
-public struct MimePart {
-    public let body: MimeBody
+/// A single MIME part.
+///
+/// Holds only decoded value types (the MimeParser wire objects are consumed at
+/// construction), so parts are `Sendable` and never expose dependency types.
+public struct MimePart: Sendable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
     public let transferEncoding: String?
     public let contentDisposition: String?
     public let contentID: String?
-    private let mime: Mime?
-    
+    /// Decoded content (transfer encoding removed), for attachments and text
+    /// alike. `nil` when the body's transfer encoding could not be decoded.
+    public let decodedData: Data?
+    /// The raw body as received, used as the text fallback when decoding fails.
+    let rawBody: String
+    /// Filename from the structured Content-Disposition header, if any.
+    private let dispositionFilename: String?
+    /// `name` parameter from the structured Content-Type header, if any.
+    private let contentTypeName: String?
+
     init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil, mime: Mime? = nil) {
         let headerDisposition = mime?.header.contentDisposition?.type
         let headerTransferEncoding = MimePart.transferEncodingString(from: mime?.header.contentTransferEncoding)
 
-        self.body = body
         self.headers = headers
         self.contentType = contentType ?? headers["content-type"]
         self.charset = charset
         self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"] ?? headerTransferEncoding
         self.contentDisposition = headers["content-disposition"] ?? headerDisposition
         self.contentID = headers["content-id"]
-        self.mime = mime
+        self.decodedData = try? body.decodedContentData()
+        self.rawBody = body.raw
+        self.dispositionFilename = mime?.header.contentDisposition?.filename
+        self.contentTypeName = mime?.header.contentType?.name
     }
-    
+
     /// Get decoded text content
     public var decodedText: String? {
-        do {
-            let decodedData = try body.decodedContentData()
-            return String(data: decodedData, encoding: encoding)
-        } catch {
-            // Fallback to raw content
-            return body.raw
+        guard let decodedData else {
+            // Decoding the transfer encoding failed; fall back to raw content.
+            return rawBody
         }
-    }
-    
-    /// Get decoded data content (for attachments)
-    public var decodedData: Data? {
-        try? body.decodedContentData()
+        return String(data: decodedData, encoding: encoding)
     }
     
     /// Check if this part is an attachment
@@ -296,11 +301,11 @@ public struct MimePart {
     
     /// Get the filename if this is an attachment
     public var filename: String? {
-        if let filename = mime?.header.contentDisposition?.filename {
+        if let filename = dispositionFilename {
             return filename
         }
-        
-        if let name = mime?.header.contentType?.name {
+
+        if let name = contentTypeName {
             return name
         }
 
@@ -357,19 +362,6 @@ public struct MimePart {
         case .quotedPrintable: return "quoted-printable"
         case .base64: return "base64"
         case .other(let value): return value
-        }
-    }
-}
-
-// Helper extension to extract body from MimeContent
-private extension MimeContent {
-    func extractBody() -> MimeBody {
-        switch self {
-        case .body(let body):
-            return body
-        case .mixed(let mimes), .alternative(let mimes):
-            // Return the first body found
-            return mimes.first?.content.extractBody() ?? MimeBody("")
         }
     }
 }
