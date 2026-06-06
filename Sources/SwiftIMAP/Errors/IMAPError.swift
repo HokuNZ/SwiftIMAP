@@ -2,32 +2,30 @@ import Foundation
 
 public enum IMAPError: Error, LocalizedError {
     case connectionFailed(String, underlying: (any Error)?)
-    case connectionError(String)
     case connectionClosed(IMAPServerResponse?)
-    case authenticationFailed(String)
+    case authenticationFailed(String, response: IMAPServerResponse?)
     case tlsError(String, underlying: (any Error)?)
     case protocolError(String)
     case parsingError(String)
     case commandFailed(IMAPServerResponse)
-    case serverError(String)
     case timeout(command: String?)
-    case disconnected
     case invalidState(String)
     case unsupportedCapability(String)
     case invalidArgument(String)
-    
+
     public var errorDescription: String? {
         switch self {
         case .connectionFailed(let message, _):
             return "Connection failed: \(message)"
-        case .connectionError(let message):
-            return "Connection error: \(message)"
         case .connectionClosed(let response):
             if let response {
                 return "Connection closed by server: \(response.line)"
             }
             return "Connection closed unexpectedly"
-        case .authenticationFailed(let message):
+        case let .authenticationFailed(message, response):
+            if let response {
+                return "Authentication failed: \(message): \(response.line)"
+            }
             return "Authentication failed: \(message)"
         case .tlsError(let message, _):
             return "TLS error: \(message)"
@@ -37,15 +35,11 @@ public enum IMAPError: Error, LocalizedError {
             return "Parsing error: \(message)"
         case .commandFailed(let response):
             return "Command '\(response.commandName)' failed: \(response.line)"
-        case .serverError(let message):
-            return "Server error: \(message)"
         case .timeout(let command):
             if let command {
                 return "Operation '\(command)' timed out"
             }
             return "Operation timed out"
-        case .disconnected:
-            return "Connection disconnected"
         case .invalidState(let message):
             return "Invalid state: \(message)"
         case .unsupportedCapability(let capability):

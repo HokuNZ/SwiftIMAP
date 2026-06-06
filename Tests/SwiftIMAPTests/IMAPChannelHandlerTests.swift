@@ -180,4 +180,31 @@ final class IMAPChannelHandlerTests: XCTestCase {
 
         XCTAssertEqual(secondCount, 1, "Response buffered while handler was nil should be delivered to new handler")
     }
+
+    /// Regression for #35 / A4: an abrupt connection drop (channelInactive with no
+    /// server response) must surface as `connectionClosed(nil)`, which the retry
+    /// layer classifies as reconnectable. Previously it surfaced as `.disconnected`,
+    /// which was neither retryable nor reconnectable, so a dropped connection
+    /// mid-session failed permanently.
+    func testAbruptDropSurfacesAsReconnectableConnectionClosed() throws {
+        let handler = makeHandler()
+        let channel = EmbeddedChannel(handler: handler)
+        defer { try? channel.finish() }
+
+        var failure: Error?
+        handler.setResponseHandler { result in
+            if case .failure(let error) = result {
+                failure = error
+            }
+        }
+
+        channel.pipeline.fireChannelInactive()
+
+        guard let imapError = failure as? IMAPError,
+              case .connectionClosed(nil) = imapError else {
+            return XCTFail("Expected connectionClosed(nil), got: \(String(describing: failure))")
+        }
+        XCTAssertTrue(imapError.requiresReconnection,
+                      "An abrupt drop must be classified as reconnectable")
+    }
 }

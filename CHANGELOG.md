@@ -22,11 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `connectionClosed` → `connectionClosed(IMAPServerResponse?)`, capturing the `BYE` greeting's code and text instead of discarding them.
   - `connectionFailed(String)` → `connectionFailed(String, underlying: (any Error)?)` and `tlsError(String)` → `tlsError(String, underlying: (any Error)?)`, preserving the typed NIO/SSL cause.
   - `timeout` → `timeout(command: String?)`, identifying which operation timed out.
+  - `authenticationFailed(String)` → `authenticationFailed(String, response: IMAPServerResponse?)` (#35). A server-rejected `LOGIN` or `AUTHENTICATE` now surfaces as `authenticationFailed` carrying the server's response; previously it surfaced as the generic `commandFailed`, so callers pattern-matching `authenticationFailed` for auth UX silently missed real rejections. Local failures (credential encoding, SASL handler returning nil) keep their message with `response: nil`.
 - The greeting wait now honours `IMAPConfiguration.connectionTimeout` instead of a hardcoded 5 seconds.
 - `connect()` failures (which surface as `connectionFailed`) are now retryable; previously the retry wrapper around `connect()` was a no-op for them. Retry classification of server rejections now branches on the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`) and never retries `BAD`. When a code is present it is authoritative: a definitive code such as `[NONEXISTENT]` is not retried even if the free text contains retry-flavoured words, and the text is consulted only when no code is sent. A `* BYE` greeting that names a definitive condition is treated as the server rejecting the connection and is no longer retried (a bare close or a `[UNAVAILABLE]`-style transient BYE still is).
 
 ### Removed
 - **Breaking.** Dead `IMAPError` cases `mailboxNotFound`, `messageNotFound`, `quotaExceeded`, and `permissionDenied`, which had no producers (#27). The equivalent information is available uniformly via `IMAPServerResponse.code` and its semantic accessors.
+- **Breaking.** Three more `IMAPError` cases (#35): `serverError` (no producers), `connectionError` (sole producer was an unreachable retry-exhaustion fallback, now `connectionFailed`), and `disconnected` (folded into `connectionClosed(nil)`: one case for "connection is gone", with the server's response when there was one and `nil` for an abrupt loss).
 
 ### Fixed
 - `ConnectionActor.waitForGreeting` no longer drops responses that arrive between the greeting and the persistent handler being installed (#26). The greeting handler is now a one-shot — it consumes the greeting batch and clears itself (inside the channel handler's lock, so no re-entrant deadlock), reverting the channel to buffering. The greeting closure's bare `resumedState` read was also replaced with a compare-and-exchange to remove a TOCTOU with the timeout task.
@@ -34,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `executeWithReconnect` now classifies and throws the reconnect failure (not the original error) when reconnection itself fails, so the surfaced error matches what actually went wrong.
 - A failed `LOGOUT` during `disconnect()` is now logged at debug level instead of being silently discarded.
 - `RetryConfiguration` now rejects `maxAttempts < 1` at construction with a clear precondition message, instead of trapping deep in the retry loop on the `1...maxAttempts` range.
+- An abrupt mid-session connection drop is now reconnectable (#35). It previously surfaced as `disconnected`, which the retry layer classified as neither retryable nor requiring reconnection, so operations wrapped in `executeWithReconnect` failed permanently when the TCP connection dropped. It now surfaces as `connectionClosed(nil)`, which reconnects and retries.
 
 ## [1.3.0] - 2026-06-01
 

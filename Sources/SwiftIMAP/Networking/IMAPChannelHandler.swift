@@ -51,7 +51,10 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
 
     func channelInactive(context: ChannelHandlerContext) {
         logger.log(level: .info, "Channel became inactive")
-        dispatch(.failure(IMAPError.disconnected))
+        // Abrupt loss with no server response: `connectionClosed(nil)`, which the
+        // retry layer classifies as reconnectable (unlike a server-announced BYE,
+        // which arrives with a response and is classified on its code).
+        dispatch(.failure(IMAPError.connectionClosed(nil)))
     }
 
     // The handler is invoked while `lock` is held so that a buffer drain and a

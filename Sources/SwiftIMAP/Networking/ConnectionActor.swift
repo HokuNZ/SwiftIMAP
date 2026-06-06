@@ -199,7 +199,7 @@ actor ConnectionActor {
     
     func startTLS() async throws {
         guard let channel = channel else {
-            throw IMAPError.disconnected
+            throw IMAPError.connectionClosed(nil)
         }
         
         do {
@@ -328,7 +328,7 @@ actor ConnectionActor {
             let encoded = try encoder.encodeCommandSegments(command, literalMode: literalMode)
             
             guard let channel = channel else {
-                continuation.resume(throwing: IMAPError.disconnected)
+                continuation.resume(throwing: IMAPError.connectionClosed(nil))
                 return
             }
 
@@ -565,7 +565,7 @@ actor ConnectionActor {
                 )
                 pending.continuation.resume(throwing: IMAPError.connectionClosed(response))
             } else {
-                pending.continuation.resume(throwing: IMAPError.disconnected)
+                pending.continuation.resume(throwing: IMAPError.connectionClosed(nil))
             }
         }
         pendingCommands.removeAll()
@@ -629,7 +629,7 @@ private extension ConnectionActor {
                     await cancelContinuation(
                         tag: tag,
                         pending: pending,
-                        error: IMAPError.authenticationFailed("SASL response handler returned nil")
+                        error: IMAPError.authenticationFailed("SASL response handler returned nil", response: nil)
                     )
                     return
                 }

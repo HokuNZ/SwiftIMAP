@@ -45,7 +45,11 @@ actor RetryHandler {
             }
         }
         
-        throw lastError ?? IMAPError.connectionError("Operation failed after \(configuration.maxAttempts) attempts")
+        // Unreachable in practice: maxAttempts >= 1 is enforced at construction, so
+        // the loop always sets lastError before exiting. Kept as a graceful fallback.
+        throw lastError ?? IMAPError.connectionFailed(
+            "Operation failed after \(configuration.maxAttempts) attempts", underlying: nil
+        )
     }
     
     /// Execute an operation that might need reconnection
@@ -105,7 +109,11 @@ actor RetryHandler {
             }
         }
         
-        throw lastError ?? IMAPError.connectionError("Operation failed after \(configuration.maxAttempts) attempts")
+        // Unreachable in practice: maxAttempts >= 1 is enforced at construction, so
+        // the loop always sets lastError before exiting. Kept as a graceful fallback.
+        throw lastError ?? IMAPError.connectionFailed(
+            "Operation failed after \(configuration.maxAttempts) attempts", underlying: nil
+        )
     }
     
     private func calculateDelay(for attempt: Int) -> TimeInterval {
@@ -134,13 +142,10 @@ actor RetryHandler {
                 // names a transient condition like `[UNAVAILABLE]`.
                 if let response { return RetryHandler.isTransientServerResponse(response) }
                 return true
-            case .connectionError, .connectionFailed:
+            case .connectionFailed:
                 return configuration.retryableErrors.contains(.connectionLost)
             case .timeout:
                 return configuration.retryableErrors.contains(.timeout)
-            case .serverError(let message):
-                return RetryHandler.isTransientText(message)
-                    && configuration.retryableErrors.contains(.temporaryFailure)
             case .commandFailed(let response):
                 // Only NO completions can be transient; BAD is a client bug and BYE
                 // is terminal. Classify on the typed response code where present,
@@ -207,12 +212,8 @@ extension IMAPError {
     /// Determines if the error indicates a lost connection that requires reconnection
     var requiresReconnection: Bool {
         switch self {
-        case .connectionError, .connectionClosed, .connectionFailed:
+        case .connectionClosed, .connectionFailed:
             return true
-        case .serverError(let message):
-            // Some server errors indicate connection issues
-            let connectionErrors = ["BYE", "DISCONNECTED", "CONNECTION RESET"]
-            return connectionErrors.contains { message.uppercased().contains($0) }
         default:
             return false
         }

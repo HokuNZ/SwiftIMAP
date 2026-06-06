@@ -62,23 +62,6 @@ final class RetryHandlerTests: XCTestCase {
         XCTAssertEqual(attemptCount, 2)
     }
 
-    func testExecuteRetriesOnTemporaryServerError() async throws {
-        let handler = makeHandler(maxAttempts: 2, retryableErrors: [.temporaryFailure])
-        let attempts = Counter()
-
-        let result: String = try await handler.execute(operation: "server-temp") {
-            let count = await attempts.increment()
-            if count == 1 {
-                throw IMAPError.serverError("Temporary unavailable")
-            }
-            return "ok"
-        }
-
-        XCTAssertEqual(result, "ok")
-        let attemptCount = await attempts.get()
-        XCTAssertEqual(attemptCount, 2)
-    }
-
     func testExecuteRetriesOnConnectionFailed() async throws {
         // connect() failures surface as connectionFailed; these must be retryable
         // (previously they fell through to non-retryable, making retries a no-op).
@@ -259,20 +242,22 @@ final class RetryHandlerTests: XCTestCase {
     func testErrorDescriptionsCoverAllCases() {
         let cases: [(IMAPError, String)] = [
             (.connectionFailed("oops", underlying: nil), "Connection failed: oops"),
-            (.connectionError("down"), "Connection error: down"),
             (.connectionClosed(nil), "Connection closed unexpectedly"),
             (.connectionClosed(IMAPServerResponse(status: .bye, code: .alert, text: "Too many connections", commandName: "CONNECT")),
              "Connection closed by server: BYE [ALERT] Too many connections"),
-            (.authenticationFailed("bad"), "Authentication failed: bad"),
+            (.authenticationFailed("bad", response: nil), "Authentication failed: bad"),
+            (.authenticationFailed(
+                "Server rejected LOGIN",
+                response: IMAPServerResponse(status: .no, code: .other("AUTHENTICATIONFAILED", nil), text: "Invalid credentials", commandName: "LOGIN")
+             ),
+             "Authentication failed: Server rejected LOGIN: NO [AUTHENTICATIONFAILED] Invalid credentials"),
             (.tlsError("nope", underlying: nil), "TLS error: nope"),
             (.protocolError("bad"), "Protocol error: bad"),
             (.parsingError("bad"), "Parsing error: bad"),
             (.commandFailed(IMAPServerResponse(status: .no, code: .tryCreate, text: "Mailbox does not exist", commandName: "UID MOVE")),
              "Command 'UID MOVE' failed: NO [TRYCREATE] Mailbox does not exist"),
-            (.serverError("BUSY"), "Server error: BUSY"),
             (.timeout(command: nil), "Operation timed out"),
             (.timeout(command: "UID MOVE"), "Operation 'UID MOVE' timed out"),
-            (.disconnected, "Connection disconnected"),
             (.invalidState("state"), "Invalid state: state"),
             (.unsupportedCapability("ID"), "Unsupported capability: ID"),
             (.invalidArgument("bad"), "Invalid argument: bad")
@@ -386,11 +371,14 @@ final class RetryHandlerTests: XCTestCase {
     }
 
     func testRequiresReconnectionFlagsConnectionErrors() {
-        XCTAssertTrue(IMAPError.connectionError("down").requiresReconnection)
+        // connectionClosed(nil) is what an abrupt TCP drop produces (see
+        // IMAPChannelHandler.channelInactive); it must be reconnectable or a
+        // dropped connection mid-session fails permanently (#35 / A4).
         XCTAssertTrue(IMAPError.connectionClosed(nil).requiresReconnection)
         XCTAssertTrue(IMAPError.connectionFailed("refused", underlying: nil).requiresReconnection)
-        XCTAssertTrue(IMAPError.serverError("BYE server closed").requiresReconnection)
-        XCTAssertFalse(IMAPError.serverError("oops").requiresReconnection)
         XCTAssertFalse(IMAPError.timeout(command: nil).requiresReconnection)
+        XCTAssertFalse(IMAPError.commandFailed(
+            IMAPServerResponse(status: .no, code: nil, text: "nope", commandName: "STORE")
+        ).requiresReconnection)
     }
 }
