@@ -46,41 +46,6 @@ extension IMAPClient {
         )
     }
 
-    /// Returns message sequence numbers matching the search criteria.
-    ///
-    /// - Warning: Sequence numbers are position-dependent and can change when messages
-    ///   are deleted or moved. For multi-step operations, use ``listMessageUIDs(in:searchCriteria:charset:)``
-    ///   instead to avoid race conditions.
-    @available(*, deprecated, message: "Use listMessageUIDs() instead - sequence numbers are unstable when mailbox changes")
-    public func listMessages(
-        in mailbox: String,
-        searchCriteria: IMAPCommand.SearchCriteria = .all,
-        charset: String? = nil
-    ) async throws -> [MessageSequenceNumber] {
-        try await retryHandler.executeWithReconnect(
-            operation: "listMessages",
-            needsReconnect: { error in
-                (error as? IMAPError)?.requiresReconnection ?? false
-            },
-            reconnect: {
-                try await self.connect()
-            },
-            work: {
-                _ = try await self.selectMailbox(mailbox)
-
-                let responses = try await self.connection.sendCommand(.search(charset: charset, criteria: searchCriteria))
-
-                for response in responses {
-                    if case .untagged(.search(let numbers)) = response {
-                        return numbers
-                    }
-                }
-
-                return []
-            }
-        )
-    }
-
     /// Fetches a message by its UID.
     ///
     /// - Note: UID is automatically included in fetch items if not present, to verify
@@ -206,27 +171,6 @@ extension IMAPClient {
                 } else {
                     self.logger.warning("FETCH response missing UID attribute for request UID \(uid)")
                 }
-            }
-        }
-
-        return nil
-    }
-
-    // Fetch message by sequence number (not UID)
-    public func fetchMessageBySequence(
-        sequenceNumber: MessageSequenceNumber,
-        in mailbox: String,
-        items: [IMAPCommand.FetchItem] = [.uid, .flags, .internalDate, .rfc822Size, .envelope]
-    ) async throws -> MessageSummary? {
-        _ = try await selectMailbox(mailbox)
-
-        let responses = try await connection.sendCommand(
-            .fetch(sequence: .single(sequenceNumber), items: items)
-        )
-
-        for response in responses {
-            if case .untagged(.fetch(let seqNum, let attributes)) = response {
-                return try parseMessageSummary(sequenceNumber: seqNum, attributes: attributes)
             }
         }
 

@@ -194,13 +194,13 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(status.uidNext, 0)
         XCTAssertGreaterThan(status.uidValidity, 0)
 
-        let sequenceNumbers = try await client.listMessages(in: mailbox)
-        guard let sequenceNumber = sequenceNumbers.first else {
-            XCTFail("Expected message sequence number")
+        let uids = try await client.listMessageUIDs(in: mailbox)
+        guard let uid = uids.first else {
+            XCTFail("Expected message UID")
             return
         }
 
-        let summary = try await client.fetchMessageBySequence(sequenceNumber: sequenceNumber, in: mailbox)
+        let summary = try await client.fetchMessage(uid: uid, in: mailbox)
         XCTAssertEqual(summary?.envelope?.subject, subject)
     }
 
@@ -396,15 +396,14 @@ final class GreenMailIntegrationTests: XCTestCase {
         try await client.storeFlags(uid: uidA, in: mailbox, flags: [.seen], action: .add)
         try await client.storeFlags(uid: uidB, in: mailbox, flags: [.seen, .flagged], action: .add)
 
-        let complexFiltered = try await client.searchMessagesComplex(
+        let complexFiltered = try await client.searchMessages(
             in: mailbox,
-            flags: [.seen],
-            excludeFlags: [.flagged]
+            matching: [.seen, .unflagged]
         )
         XCTAssertTrue(complexFiltered.contains { $0.uid == uidA })
         XCTAssertFalse(complexFiltered.contains { $0.uid == uidB })
 
-        let complexAll = try await client.searchMessagesComplex(in: mailbox)
+        let complexAll = try await client.searchMessages(in: mailbox, criteria: .all)
         XCTAssertGreaterThanOrEqual(complexAll.count, 2)
 
         let limited = try await client.searchMessages(in: mailbox, criteria: .all, limit: 1)

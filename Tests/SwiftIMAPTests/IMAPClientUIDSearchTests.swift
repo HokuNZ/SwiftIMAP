@@ -132,40 +132,6 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
-    // MARK: - Deprecation of listMessages Tests
-
-    /// Test that listMessages still works (for backwards compatibility) but uses sequence numbers
-    func testListMessagesReturnsSequenceNumbers() async throws {
-        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
-        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
-        // Plain SEARCH returns sequence numbers
-        mockServer.setResponse(for: "SEARCH", response: "* SEARCH 1 2 3")
-
-        let client = makeClient()
-        try await client.connect()
-
-        // This should still work but use plain SEARCH (not UID SEARCH)
-        let sequenceNumbers = try await client.listMessages(in: "INBOX")
-
-        // Verify plain SEARCH was used (not UID SEARCH)
-        let commands = mockServer.receivedCommands.map { $0.uppercased() }
-        let searchCommands = commands.filter { $0.contains("SEARCH") }
-
-        // There should be a SEARCH command that is NOT prefixed with UID
-        let hasPlainSearch = searchCommands.contains { cmd in
-            // Check that SEARCH appears but not immediately after UID
-            let containsSearch = cmd.contains("SEARCH")
-            let containsUIDSearch = cmd.contains("UID SEARCH")
-            return containsSearch && !containsUIDSearch
-        }
-        XCTAssertTrue(hasPlainSearch, "Expected plain SEARCH command, got: \(searchCommands)")
-
-        XCTAssertEqual(sequenceNumbers, [1, 2, 3])
-
-        await client.disconnect()
-    }
-
     // MARK: - Edge Cases
 
     /// Test listMessageUIDs with complex search criteria

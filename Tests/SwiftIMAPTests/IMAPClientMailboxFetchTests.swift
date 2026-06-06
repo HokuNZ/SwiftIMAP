@@ -117,16 +117,16 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testListMessagesWithCharsetReturnsEmpty() async throws {
+    func testListMessageUIDsWithCharsetReturnsEmpty() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
         mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
-        mockServer.setResponse(for: "SEARCH", response: "* SEARCH")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH")
 
         let client = makeClient()
         try await client.connect()
 
-        let results = try await client.listMessages(
+        let results = try await client.listMessageUIDs(
             in: "INBOX",
             searchCriteria: .header(field: "Subject", value: "Test"),
             charset: "UTF-8"
@@ -261,12 +261,12 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testListMessagesThrowsWhenDisconnected() async {
+    func testListMessageUIDsThrowsWhenDisconnected() async {
         let client = makeClient()
 
         do {
-            _ = try await client.listMessages(in: "INBOX")
-            XCTFail("Expected listMessages to throw when disconnected")
+            _ = try await client.listMessageUIDs(in: "INBOX")
+            XCTFail("Expected listMessageUIDs to throw when disconnected")
         } catch {
             guard case IMAPError.invalidState(let message) = error else {
                 return XCTFail("Expected invalidState error")

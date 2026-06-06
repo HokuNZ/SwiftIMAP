@@ -58,7 +58,7 @@ let status = try await client.selectMailbox("INBOX")
 print("Messages in INBOX: \(status.messages)")
 
 // Search for messages
-let messageUIDs = try await client.listMessages(in: "INBOX")
+let messageUIDs = try await client.listMessageUIDs(in: "INBOX")
 
 // Fetch a message
 if let firstUID = messageUIDs.first {
@@ -179,17 +179,17 @@ let status = try await client.mailboxStatus("Sent")
 
 ```swift
 // Search messages
-let allMessages = try await client.listMessages(
+let allMessageUIDs = try await client.listMessageUIDs(
     in: "INBOX",
     searchCriteria: .all
 )
 
-let unreadMessages = try await client.listMessages(
-    in: "INBOX", 
+let unreadUIDs = try await client.listMessageUIDs(
+    in: "INBOX",
     searchCriteria: .unseen
 )
 
-let fromAlice = try await client.listMessages(
+let fromAlice = try await client.listMessageUIDs(
     in: "INBOX",
     searchCriteria: .from("alice@example.com")
 )

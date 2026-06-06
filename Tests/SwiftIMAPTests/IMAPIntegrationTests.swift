@@ -430,7 +430,7 @@ final class IMAPIntegrationTests: XCTestCase {
             * OK [UIDVALIDITY 1234567890]
             * OK [UIDNEXT 43]
             """)
-        mockServer.setResponse(for: "SEARCH ALL", response: """
+        mockServer.setResponse(for: "UID SEARCH ALL", response: """
             * SEARCH 1 2 3
             """)
         mockServer.setResponse(for: "UID FETCH", response: """
@@ -455,8 +455,8 @@ final class IMAPIntegrationTests: XCTestCase {
         XCTAssertEqual(selectStatus.recent, 1)
         
         // Search messages
-        let messageNumbers = try await client.listMessages(in: "INBOX")
-        XCTAssertEqual(messageNumbers, [1, 2, 3])
+        let messageUIDs = try await client.listMessageUIDs(in: "INBOX")
+        XCTAssertEqual(messageUIDs, [1, 2, 3])
         
         // Fetch message
         let message = try await client.fetchMessage(uid: 1, in: "INBOX")
@@ -490,31 +490,6 @@ final class IMAPIntegrationTests: XCTestCase {
         XCTAssertEqual(status.uidNext, 7)
         XCTAssertEqual(status.uidValidity, 42)
         XCTAssertEqual(status.unseen, 2)
-        await client.disconnect()
-    }
-
-    func testFetchMessageBySequenceReturnsSummary() async throws {
-        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
-        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "* 1 EXISTS")
-        mockServer.setResponse(for: "FETCH", response: """
-            * 2 FETCH (UID 99 FLAGS (\\Seen) INTERNALDATE "01-Jan-2024 12:00:00 +0000" RFC822.SIZE 1234 ENVELOPE ("Mon, 1 Jan 2024 12:00:00 +0000" "Seq Subject" (("Sender" NIL "sender" "example.com")) NIL NIL (("Recipient" NIL "recipient" "example.com")) NIL NIL NIL "<seq-id@example.com>"))
-            """)
-
-        let config = IMAPConfiguration(
-            hostname: "localhost",
-            port: serverPort,
-            tlsMode: .disabled,
-            authMethod: .login(username: "testuser", password: "testpass")
-        )
-
-        let client = IMAPClient(configuration: config)
-
-        try await client.connect()
-        let summary = try await client.fetchMessageBySequence(sequenceNumber: 2, in: "INBOX")
-        XCTAssertEqual(summary?.uid, 99)
-        XCTAssertEqual(summary?.sequenceNumber, 2)
-        XCTAssertEqual(summary?.envelope?.subject, "Seq Subject")
         await client.disconnect()
     }
 
@@ -696,16 +671,13 @@ final class IMAPIntegrationTests: XCTestCase {
         let flaggedMatches = try await client.searchFlaggedMessages(in: "INBOX")
         XCTAssertEqual(flaggedMatches.count, 2)
 
-        let complexMatches = try await client.searchMessagesComplex(
+        let complexMatches = try await client.searchMessages(
             in: "INBOX",
-            from: "sender@example.com",
-            subject: "Search Subject",
-            flags: [.seen],
-            excludeFlags: [.flagged]
+            matching: [.from("sender@example.com"), .subject("Search Subject"), .seen, .unflagged]
         )
         XCTAssertEqual(complexMatches.count, 2)
 
-        let complexAll = try await client.searchMessagesComplex(in: "INBOX")
+        let complexAll = try await client.searchMessages(in: "INBOX", criteria: .all)
         XCTAssertEqual(complexAll.count, 2)
 
         await client.disconnect()
