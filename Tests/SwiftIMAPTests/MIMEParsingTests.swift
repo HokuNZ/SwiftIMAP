@@ -252,6 +252,22 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertThrowsError(try MessageSummary.parseMimeContent(from: invalid))
     }
 
+    /// Compile-time guarantee for #38: ParsedMimeMessage and MimePart are
+    /// Sendable, so parsed results can cross actor/task boundaries. This test
+    /// fails to compile (under strict concurrency it errors) if the conformance
+    /// is removed or invalidated by a non-Sendable stored property.
+    func testParsedMimeMessageCrossesActorBoundary() async throws {
+        let raw = "Content-Type: text/plain; charset=utf-8\r\n\r\nHello across actors"
+        let parsed = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+
+        let text = await Task.detached { parsed.plainTextContent }.value
+        XCTAssertEqual(text, "Hello across actors")
+
+        let parts: [MimePart] = parsed.parts
+        let decoded = await Task.detached { parts.compactMap(\.decodedText) }.value
+        XCTAssertEqual(decoded, ["Hello across actors"])
+    }
+
     // Helper to create a test message summary
     private func createTestSummary() -> MessageSummary {
         MessageSummary(
