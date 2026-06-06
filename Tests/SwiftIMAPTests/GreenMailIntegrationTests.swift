@@ -177,7 +177,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertFalse(unreadAfter.contains { $0.uid == summary.uid })
     }
 
-    func testMailboxStatusAndFetchBySequence() async throws {
+    func testMailboxStatusAndFetchByUID() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
 
