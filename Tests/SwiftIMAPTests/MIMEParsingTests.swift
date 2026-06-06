@@ -252,6 +252,19 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertThrowsError(try MessageSummary.parseMimeContent(from: invalid))
     }
 
+    /// The decodedText raw fallback (#38): when the transfer encoding cannot be
+    /// decoded, decodedText returns the raw body text rather than nil, and
+    /// decodedData is nil. Pins the only reason rawBody is retained.
+    func testUndecodableTransferEncodingFallsBackToRawText() throws {
+        let raw = "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: x-custom\r\n\r\nraw payload text"
+        let parsed = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+        let part = try XCTUnwrap(parsed.parts.first)
+
+        XCTAssertNil(part.decodedData, "Unknown transfer encoding should fail to decode")
+        XCTAssertEqual(part.decodedText, "raw payload text",
+                       "decodedText must fall back to the raw body when decoding fails")
+    }
+
     /// Compile-time guarantee for #38: ParsedMimeMessage and MimePart are
     /// Sendable, so parsed results can cross actor/task boundaries. This test
     /// fails to compile (under strict concurrency it errors) if the conformance
