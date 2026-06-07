@@ -202,8 +202,7 @@ public struct ParsedMimeMessage: Sendable {
 
 /// A single MIME part.
 ///
-/// Holds only decoded value types (the MimeParser wire objects are consumed at
-/// construction), so parts are `Sendable` and never expose dependency types.
+/// Holds only decoded value types (the MimeParser wire objects are consumed at construction)
 public struct MimePart: Sendable {
     public let headers: [String: String]
     public let contentType: String?
@@ -211,17 +210,9 @@ public struct MimePart: Sendable {
     public let transferEncoding: String?
     public let contentDisposition: String?
     public let contentID: String?
-    /// Decoded content (transfer encoding removed), for attachments and text
-    /// alike. `nil` when the body's transfer encoding could not be decoded.
     public let decodedData: Data?
-    /// The raw body as received — retained only when decoding failed, as the
-    /// text fallback for ``decodedText``. Empty after a successful decode, so a
-    /// large attachment does not hold its transfer-encoded form (e.g. the
-    /// base64 text) in memory alongside the decoded bytes.
     private let rawBody: String
-    /// Filename from the structured Content-Disposition header, if any.
     private let dispositionFilename: String?
-    /// `name` parameter from the structured Content-Type header, if any.
     private let contentTypeName: String?
 
     init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil, mime: Mime? = nil) {
@@ -244,7 +235,7 @@ public struct MimePart: Sendable {
     /// Get decoded text content
     public var decodedText: String? {
         guard let decodedData else {
-            // Decoding the transfer encoding failed; fall back to raw content.
+            // Could not decode the transfer encoding; fall back to raw content.
             return rawBody
         }
         return String(data: decodedData, encoding: encoding)
