@@ -213,9 +213,8 @@ public struct IMAPCommand: Sendable {
         
         /// Helper method to create a SequenceSet from a non-empty array of UIDs.
         ///
-        /// - Precondition: `uids` must not be empty. There is no valid IMAP
-        ///   sequence set for zero messages (UID 0 is invalid on the wire), so an
-        ///   empty array is a caller bug; guard with `isEmpty` before calling.
+        /// - Precondition: `uids` is non-empty (an empty sequence set cannot be
+        ///   expressed in IMAP).
         public static func set(_ uids: [UInt32]) -> SequenceSet {
             precondition(!uids.isEmpty, "SequenceSet.set requires at least one UID; an empty set cannot be expressed in IMAP (UID 0 is invalid).")
 
