@@ -141,8 +141,6 @@ extension IMAPClient {
     /// Move a message to another mailbox (if server supports MOVE extension)
     /// Falls back to COPY + mark as deleted if MOVE is not supported
     public func moveMessage(uid: UID, from sourceMailbox: String, to destinationMailbox: String) async throws {
-        // Capability-gate on the cached set (refreshed post-auth by connect())
-        // rather than paying a CAPABILITY round trip per move.
         let capabilities = await connection.getCapabilities()
         if capabilities.contains("MOVE") {
             _ = try await selectMailbox(sourceMailbox)
@@ -161,7 +159,6 @@ extension IMAPClient {
     public func moveMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String) async throws {
         guard !uids.isEmpty else { return }
 
-        // Capability-gate on the cached set, as in moveMessage(uid:from:to:).
         let capabilities = await connection.getCapabilities()
         if capabilities.contains("MOVE") {
             _ = try await selectMailbox(sourceMailbox)
@@ -188,11 +185,9 @@ extension IMAPClient {
 
     /// Permanently delete specific messages via `UID EXPUNGE`.
     ///
-    /// - Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does
-    ///   not support UIDPLUS. A targeted expunge is impossible without it, and
-    ///   falling back to a whole-mailbox `EXPUNGE` would permanently delete every
-    ///   `\Deleted` message in the mailbox — not just the named UIDs. Use
-    ///   ``expunge(mailbox:)`` if whole-mailbox expunge is actually what you want.
+    /// Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does not support UIDPLUS. 
+    /// Falling back to a whole-mailbox `EXPUNGE` would permanently delete every `\Deleted` message in the mailbox — not just the named UIDs. 
+    /// Use ``expunge(mailbox:)`` if whole-mailbox expunge is actually what you want.
     public func expunge(uids: [UID], in mailbox: String) async throws {
         guard !uids.isEmpty else { return }
 
@@ -210,17 +205,11 @@ extension IMAPClient {
     }
 
     /// Delete a message (mark as deleted, then `UID EXPUNGE` it).
-    ///
-    /// - Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does
-    ///   not support UIDPLUS (see ``expunge(uids:in:)``).
     public func deleteMessage(uid: UID, in mailbox: String) async throws {
         try await deleteMessages(uids: [uid], in: mailbox)
     }
 
     /// Delete multiple messages (one batched STORE, then `UID EXPUNGE`).
-    ///
-    /// - Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does
-    ///   not support UIDPLUS (see ``expunge(uids:in:)``).
     public func deleteMessages(uids: [UID], in mailbox: String) async throws {
         guard !uids.isEmpty else { return }
 

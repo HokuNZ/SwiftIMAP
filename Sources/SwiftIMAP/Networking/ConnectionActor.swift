@@ -145,7 +145,7 @@ actor ConnectionActor {
             
             // No response handler installed yet — waitForGreeting will install one below.
             // IMAPChannelHandler buffers any bytes that arrive in the meantime, so the
-            // greeting cannot be dropped if the server beats us to setResponseHandler (#21).
+            // greeting cannot be dropped if the server beats us to setResponseHandler
             
             let tlsConfig = self.tlsConfiguration
             let imapConfig = self.configuration
@@ -190,8 +190,6 @@ actor ConnectionActor {
             return greeting
         } catch let error as IMAPError {
             // Preserve typed IMAP errors (e.g. timeout(command:), connectionClosed)
-            // rather than flattening them into connectionFailed — re-wrapping would
-            // bury the operation context and misclassify them for retry.
             connectionState = .disconnected
             await cleanup()
             throw error
@@ -292,9 +290,8 @@ actor ConnectionActor {
         serverCapabilities = ConnectionActor.normalised(caps)
     }
 
-    /// IMAP capability tokens are case-insensitive (RFC 3501 §7.2.1); normalise
-    /// to upper case at the cache boundary so every gate (`MOVE`, `UIDPLUS`,
-    /// `LITERAL+`, `SASL-IR`, ...) can compare against upper-case literals.
+    /// IMAP capability tokens are case-insensitive (RFC 3501 §7.2.1)
+    /// Normalise to upper case at the cache boundary
     private static func normalised(_ caps: some Sequence<String>) -> Set<String> {
         Set(caps.map { $0.uppercased() })
     }
@@ -314,11 +311,7 @@ actor ConnectionActor {
         return String(format: "A%04d", commandTag)
     }
 
-    /// Convert a timeout in seconds to nanoseconds, clamped to a non-negative,
-    /// finite value. A misconfigured (negative, NaN, or oversized) timeout from
-    /// the public API would otherwise trap the `UInt64` conversion; here a
-    /// non-positive or non-finite value yields 0, i.e. an immediate, deterministic
-    /// timeout rather than a crash.
+    /// Convert a timeout in seconds to nanoseconds, clamped to a non-negative, finite value.
     private static func nanoseconds(fromSeconds seconds: TimeInterval) -> UInt64 {
         guard seconds.isFinite, seconds > 0 else { return 0 }
         let nanos = seconds * 1_000_000_000
@@ -433,8 +426,7 @@ actor ConnectionActor {
             for (_, pending) in pendingCommands {
                 pending.timeoutTask.cancel()
                 if let bye = pendingBye {
-                    // The connection dropped after the server sent a `* BYE`; surface
-                    // its reason instead of the generic transport error.
+                    // The connection dropped after the server sent a `* BYE`
                     let response = IMAPServerResponse(
                         status: .bye,
                         code: bye.code,
@@ -541,9 +533,8 @@ actor ConnectionActor {
                 }
             }
             
-            // One-shot: the handler is delivered the first response batch (the
-            // greeting) and then cleared, so any response arriving before the
-            // persistent handler is installed in connect() is buffered, not dropped.
+            // One-shot: the handler is delivered the first response batch (the greeting) and then cleared, 
+            // so any response arriving before the persistent handler is installed in connect() is buffered, not dropped.
             channelHandler?.setResponseHandler({ [weak self] result in
                 switch result {
                 case .success(let responses):
@@ -587,9 +578,8 @@ actor ConnectionActor {
         for (_, pending) in pendingCommands {
             pending.timeoutTask.cancel()
             if let bye = pendingBye {
-                // Teardown after a `* BYE` was seen (e.g. an explicit disconnect that
-                // races the channel going inactive): surface the BYE reason rather
-                // than a bare transport error, matching the handleResponses path.
+                // Teardown after a `* BYE` was seen (e.g. an explicit disconnect that races the channel going inactive): 
+                // Surface the BYE reason rather than a bare transport error, matching the handleResponses path.
                 let response = IMAPServerResponse(
                     status: .bye,
                     code: bye.code,
