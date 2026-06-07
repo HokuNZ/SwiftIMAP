@@ -113,9 +113,6 @@ actor ConnectionActor {
         self.logger = Logger(label: "ConnectionActor", level: configuration.logLevel)
     }
     
-    /// Whether the session is established (authenticated or selected) and the
-    /// transport is still alive. The basis of `IMAPClient.connect()`'s
-    /// no-op-when-healthy fast path (#37).
     func isHealthy() -> Bool {
         switch connectionState {
         case .authenticated, .selected:
@@ -126,11 +123,9 @@ actor ConnectionActor {
     }
 
     func connect() async throws -> IMAPResponse {
-        // A stale session — the transport died but the failure path has not run
-        // yet (e.g. a half-open drop with no traffic since) — is reset here so
-        // reconnecting does not require a manual disconnect() first (#37).
         if connectionState != .disconnected, connectionState != .connecting,
            channel?.isActive != true {
+            // Reset here so reconnecting does not require a manual disconnect() first
             connectionState = .disconnected
             await cleanup()
         }
