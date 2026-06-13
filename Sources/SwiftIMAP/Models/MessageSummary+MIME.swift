@@ -30,7 +30,7 @@ extension MessageSummary {
 }
 
 /// A parsed MIME message with convenient access to parts
-public struct ParsedMimeMessage: Sendable {
+public struct ParsedMimeMessage: Sendable, Equatable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
@@ -203,7 +203,7 @@ public struct ParsedMimeMessage: Sendable {
 /// A single MIME part.
 ///
 /// Holds only decoded value types (the MimeParser wire objects are consumed at construction)
-public struct MimePart: Sendable {
+public struct MimePart: Sendable, Equatable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
