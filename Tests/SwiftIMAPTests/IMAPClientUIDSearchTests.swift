@@ -135,9 +135,9 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// #47: results are returned in the searched-UID order, and a UID the server
+    /// Results are returned in the searched-UID order, and a UID the server
     /// omits (deleted between search and fetch) is skipped rather than failing
-    /// the call — preserving the per-UID loop's semantics in the batched fetch.
+    /// the call.
     func testSearchMessagesPreservesOrderAndSkipsMissingUIDs() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -161,7 +161,7 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// #47: results follow the SEARCH result order, not numeric/ascending order.
+    /// Results follow the SEARCH result order, not numeric/ascending order.
     /// SequenceSet.set sorts the UIDs on the wire, so a non-ascending SEARCH
     /// result is the only fixture that proves the result tracks searched order
     /// rather than the sorted wire order.
@@ -183,8 +183,8 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// #47: a limit drives the batched fetch end-to-end — only the most-recent
-    /// UIDs are fetched, and if the server returns extras they are dropped.
+    /// A limit drives the batched fetch end-to-end — only the most-recent UIDs
+    /// are fetched, and if the server returns extras they are dropped.
     func testSearchMessagesWithLimitFetchesOnlyLimitedUIDs() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -212,9 +212,8 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// #47: a FETCH response carrying a UID that was not requested (the rewrite's
-    /// new failure mode — under the old per-UID loop this was impossible) is
-    /// dropped, not mis-attributed.
+    /// A FETCH response carrying a UID that was not requested is dropped, not
+    /// mis-attributed (responses are mapped back to the requested UIDs).
     func testSearchMessagesDropsUnrequestedUIDs() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -235,8 +234,8 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// #47 (PR #56 review): limit 0 must return [] rather than building a
-    /// SequenceSet from an empty array (which traps in SequenceSet.set).
+    /// A limit of 0 must return [] rather than building a SequenceSet from an
+    /// empty array (which traps in SequenceSet.set).
     func testSearchMessagesWithZeroLimitReturnsEmpty() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
