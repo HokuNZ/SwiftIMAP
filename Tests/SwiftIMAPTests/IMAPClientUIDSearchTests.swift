@@ -235,6 +235,25 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// #47 (PR #56 review): limit 0 must return [] rather than building a
+    /// SequenceSet from an empty array (which traps in SequenceSet.set).
+    func testSearchMessagesWithZeroLimitReturnsEmpty() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 100 200 300")
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summaries = try await client.searchMessages(in: "INBOX", criteria: .all, limit: 0)
+        XCTAssertEqual(summaries.count, 0)
+        // No FETCH should be sent for an empty result set.
+        XCTAssertFalse(mockServer.receivedCommands.contains { $0.uppercased().contains("UID FETCH") })
+
+        await client.disconnect()
+    }
+
     // MARK: - Edge Cases
 
     /// Test listMessageUIDs with complex search criteria
