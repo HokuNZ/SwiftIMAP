@@ -133,47 +133,61 @@ extension IMAPClient {
         in mailbox: String,
         peek: Bool = true
     ) async throws -> Data? {
-        _ = try await selectMailbox(mailbox)
+        // A body fetch is a read (idempotent), so reconnect-and-retry on a lost
+        // connection is safe — matching fetchMessage. The peek default also means
+        // the retry does not double-clear \Seen.
+        try await retryHandler.executeWithReconnect(
+            operation: "fetchMessageBody",
+            needsReconnect: { error in
+                (error as? IMAPError)?.requiresReconnection ?? false
+            },
+            reconnect: {
+                try await self.connect()
+            },
+            work: {
+                _ = try await self.selectMailbox(mailbox)
 
-        // Request UID along with body for verification
-        let responses = try await connection.sendCommand(
-            .uid(.fetch(
-                sequence: .single(uid),
-                items: [.uid, .bodySection(section: nil, peek: peek)]
-            ))
-        )
+                // Request UID along with body for verification
+                let responses = try await self.connection.sendCommand(
+                    .uid(.fetch(
+                        sequence: .single(uid),
+                        items: [.uid, .bodySection(section: nil, peek: peek)]
+                    ))
+                )
 
-        for response in responses {
-            if case .untagged(.fetch(_, let attributes)) = response {
-                // Extract UID from response for verification
-                var responseUID: UID?
-                var bodyData: Data?
+                for response in responses {
+                    if case .untagged(.fetch(_, let attributes)) = response {
+                        // Extract UID from response for verification
+                        var responseUID: UID?
+                        var bodyData: Data?
 
-                for attribute in attributes {
-                    switch attribute {
-                    case .uid(let fetchedUID):
-                        responseUID = fetchedUID
-                    case .body(_, _, let data), .bodyPeek(_, _, let data):
-                        bodyData = data
-                    default:
-                        continue
+                        for attribute in attributes {
+                            switch attribute {
+                            case .uid(let fetchedUID):
+                                responseUID = fetchedUID
+                            case .body(_, _, let data), .bodyPeek(_, _, let data):
+                                bodyData = data
+                            default:
+                                continue
+                            }
+                        }
+
+                        // Only return body if UID matches the requested UID
+                        // This prevents returning wrong data when multiple fetches are pending
+                        if let responseUID = responseUID {
+                            if responseUID == uid, let data = bodyData {
+                                return data
+                            } else if responseUID != uid {
+                                self.logger.debug("UID mismatch in fetchMessageBody: requested \(uid), received \(responseUID) - skipping response")
+                            }
+                        } else {
+                            self.logger.warning("FETCH response missing UID attribute for request UID \(uid)")
+                        }
                     }
                 }
 
-                // Only return body if UID matches the requested UID
-                // This prevents returning wrong data when multiple fetches are pending
-                if let responseUID = responseUID {
-                    if responseUID == uid, let data = bodyData {
-                        return data
-                    } else if responseUID != uid {
-                        self.logger.debug("UID mismatch in fetchMessageBody: requested \(uid), received \(responseUID) - skipping response")
-                    }
-                } else {
-                    self.logger.warning("FETCH response missing UID attribute for request UID \(uid)")
-                }
+                return nil
             }
-        }
-
-        return nil
+        )
     }
 }

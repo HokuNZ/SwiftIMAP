@@ -104,14 +104,31 @@ extension IMAPClient {
     }
 
     public func disconnect() async {
-        do {
-            _ = try await logout()
-        } catch {
-            // A failed LOGOUT during teardown is non-fatal, but log it so a server
-            // that rejects or hangs on LOGOUT is diagnosable rather than invisible.
-            logger.debug("LOGOUT during disconnect failed (ignored): \(error.localizedDescription)")
+        // Bound the LOGOUT so a dead-but-open channel cannot make disconnect()
+        // wait the full commandTimeout (default 60s): sendCommand is not
+        // cancellation-aware, so we race LOGOUT against a short sleep and, when
+        // either wins, close the connection. Closing resumes a still-pending
+        // LOGOUT via teardown, so the group drains immediately rather than
+        // blocking on the dead channel. A fast, healthy LOGOUT still returns at
+        // once — we do not wait out the bound.
+        let logoutBound = min(configuration.commandTimeout, 5)
+        let boundNanos = UInt64(max(0, logoutBound) * 1_000_000_000)
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                do {
+                    _ = try await self.logout()
+                } catch {
+                    self.logger.debug("LOGOUT during disconnect failed (ignored): \(error.localizedDescription)")
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: boundNanos)
+            }
+            await group.next()
+            await self.connection.disconnect()
+            group.cancelAll()
         }
-        await connection.disconnect()
     }
 
     public func capability() async throws -> Set<String> {
