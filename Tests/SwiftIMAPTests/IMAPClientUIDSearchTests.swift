@@ -102,9 +102,8 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
         // UID SEARCH returns UIDs
         mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 100 200")
-        // UID FETCH returns message details - set specific responses for each UID
-        mockServer.setResponse(for: "UID FETCH 100", response: "* 1 FETCH (UID 100 FLAGS (\\Seen) INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 4286 ENVELOPE (\"Wed, 17 Jul 1996 02:23:25 -0700\" \"Test Subject 1\" ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<msg1@example.com>\"))")
-        mockServer.setResponse(for: "UID FETCH 200", response: "* 2 FETCH (UID 200 FLAGS () INTERNALDATE \"18-Jul-1996 02:44:25 -0700\" RFC822.SIZE 1234 ENVELOPE (\"Thu, 18 Jul 1996 02:23:25 -0700\" \"Test Subject 2\" ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<msg2@example.com>\"))")
+        // A single batched UID FETCH returns both messages in one response.
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 100 FLAGS (\\Seen) INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 4286 ENVELOPE (\"Wed, 17 Jul 1996 02:23:25 -0700\" \"Test Subject 1\" ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<msg1@example.com>\"))\r\n* 2 FETCH (UID 200 FLAGS () INTERNALDATE \"18-Jul-1996 02:44:25 -0700\" RFC822.SIZE 1234 ENVELOPE (\"Thu, 18 Jul 1996 02:23:25 -0700\" \"Test Subject 2\" ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"sender\" \"example.com\")) ((NIL NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<msg2@example.com>\"))")
 
         let client = makeClient()
         try await client.connect()
@@ -118,16 +117,46 @@ final class IMAPClientUIDSearchTests: XCTestCase {
             XCTAssertTrue(cmd.contains("UID"), "SEARCH should be prefixed with UID: \(cmd)")
         }
 
-        // Verify UID FETCH was used (not plain FETCH)
+        // Verify UID FETCH was used (not plain FETCH), and exactly one fetch was
+        // issued for the N results (batched, not one round trip per UID).
         let fetchCommands = commands.filter { $0.contains("FETCH") }
+        XCTAssertEqual(fetchCommands.count, 1, "Expected a single batched UID FETCH, got: \(fetchCommands)")
         for cmd in fetchCommands {
             XCTAssertTrue(cmd.contains("UID"), "FETCH should be prefixed with UID: \(cmd)")
+            XCTAssertTrue(cmd.contains("100") && cmd.contains("200"),
+                          "The batched FETCH should carry both UIDs: \(cmd)")
         }
 
         // Verify we got the expected messages with correct UIDs
         XCTAssertEqual(summaries.count, 2)
         let returnedUIDs = Set(summaries.map { $0.uid })
         XCTAssertEqual(returnedUIDs, [100, 200], "Should return messages with UIDs 100 and 200")
+
+        await client.disconnect()
+    }
+
+    /// #47: results are returned in the searched-UID order, and a UID the server
+    /// omits (deleted between search and fetch) is skipped rather than failing
+    /// the call — preserving the per-UID loop's semantics in the batched fetch.
+    func testSearchMessagesPreservesOrderAndSkipsMissingUIDs() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 100 200 300")
+        // Server returns 300 before 100, and omits 200 entirely (deleted). The
+        // result must follow the searched order [100, 300] and drop 200.
+        mockServer.setResponse(for: "UID FETCH", response: "* 3 FETCH (UID 300 FLAGS () INTERNALDATE \"03-Jan-2024 12:00:00 +0000\" RFC822.SIZE 30 ENVELOPE (\"Wed, 3 Jan 2024 12:00:00 +0000\" \"Third\" ((NIL NIL \"s\" \"x.com\")) NIL NIL ((NIL NIL \"r\" \"x.com\")) NIL NIL NIL \"<3@x.com>\"))\r\n* 1 FETCH (UID 100 FLAGS () INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 10 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"First\" ((NIL NIL \"s\" \"x.com\")) NIL NIL ((NIL NIL \"r\" \"x.com\")) NIL NIL NIL \"<1@x.com>\"))")
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summaries = try await client.searchMessages(in: "INBOX", criteria: .all)
+
+        XCTAssertEqual(summaries.map { $0.uid }, [100, 300],
+                       "Results must follow searched-UID order, with the missing UID 200 skipped")
+
+        let fetchCommands = mockServer.receivedCommands.filter { $0.uppercased().contains("FETCH") }
+        XCTAssertEqual(fetchCommands.count, 1, "Still a single batched FETCH")
 
         await client.disconnect()
     }
