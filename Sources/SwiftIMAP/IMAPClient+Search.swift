@@ -42,6 +42,12 @@ extension IMAPClient {
             uids
         }
 
+        // A limit of 0 (or a non-positive limit) yields an empty set; return
+        // early rather than building a SequenceSet from [] (which traps).
+        guard !uidsToFetch.isEmpty else {
+            return []
+        }
+
         // Fetch all matching messages in a single UID FETCH rather than one round
         // trip per UID. Reconnect-and-retry is safe (a fetch is an idempotent
         // read), matching fetchMessage.
