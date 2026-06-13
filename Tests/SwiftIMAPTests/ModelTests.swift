@@ -2,6 +2,9 @@ import XCTest
 @testable import SwiftIMAP
 
 final class ModelTests: XCTestCase {
+
+    /// Build a MessageID from a known-good bare value (test convenience).
+    private func mid(_ value: String) -> MessageID { MessageID(parsing: value)! }
     
     func testMailboxCreation() {
         let mailbox = Mailbox(
@@ -91,7 +94,7 @@ final class ModelTests: XCTestCase {
             cc: [],
             bcc: [],
             inReplyTo: nil,
-            messageID: MessageID(value: "12345@example.com")
+            messageID: mid("12345@example.com")
         )
         
         let summary = MessageSummary(
@@ -127,7 +130,7 @@ final class ModelTests: XCTestCase {
                 size: 100,
                 envelope: Envelope(date: date, subject: subject,
                                    from: [Address(name: "A", mailbox: "a", host: "x.com")]),
-                references: [MessageID(value: "r1@x.com")]
+                references: [mid("r1@x.com")]
             )
         }
 
@@ -153,12 +156,20 @@ final class ModelTests: XCTestCase {
     /// of the same identifier compare equal — the property that makes threading
     /// comparisons bracket-safe.
     func testMessageIDNormalisationAndEquality() {
-        XCTAssertEqual(MessageID(parsing: "<a@x.com>"), MessageID(value: "a@x.com"))
+        XCTAssertEqual(MessageID(parsing: "<a@x.com>"), mid("a@x.com"))
         XCTAssertEqual(MessageID(parsing: "  <a@x.com> "), MessageID(parsing: "a@x.com"))
         XCTAssertEqual(MessageID(parsing: "<a@x.com>")?.value, "a@x.com")
-        XCTAssertEqual(MessageID(value: "a@x.com").bracketed, "<a@x.com>")
+        XCTAssertEqual(mid("a@x.com").bracketed, "<a@x.com>")
         XCTAssertNil(MessageID(parsing: "   "))
         XCTAssertNil(MessageID(parsing: "<>"))
+
+        // Malformed half-bracketed tokens still canonicalise to the bare id
+        // (brackets stripped independently), so threading still matches.
+        XCTAssertEqual(MessageID(parsing: "<a@x.com"), mid("a@x.com"))
+        XCTAssertEqual(MessageID(parsing: "a@x.com>"), mid("a@x.com"))
+        // A lone bracket has no identity and is dropped.
+        XCTAssertNil(MessageID(parsing: "<"))
+        XCTAssertNil(MessageID(parsing: ">"))
     }
 
     /// MessageID.parseList tokenises a raw References header into ordered,
@@ -166,12 +177,15 @@ final class ModelTests: XCTestCase {
     /// empty tokens.
     func testMessageIDParseList() {
         XCTAssertEqual(MessageID.parseList("<a@x.com> <b@y.com>"),
-                       [MessageID(value: "a@x.com"), MessageID(value: "b@y.com")])
+                       [mid("a@x.com"), mid("b@y.com")])
         XCTAssertEqual(MessageID.parseList("<a@x.com>,<b@y.com>"),
-                       [MessageID(value: "a@x.com"), MessageID(value: "b@y.com")])
-        XCTAssertEqual(MessageID.parseList("  <only@x.com>  "), [MessageID(value: "only@x.com")])
-        XCTAssertEqual(MessageID.parseList("bare@x.com"), [MessageID(value: "bare@x.com")])
+                       [mid("a@x.com"), mid("b@y.com")])
+        XCTAssertEqual(MessageID.parseList("  <only@x.com>  "), [mid("only@x.com")])
+        XCTAssertEqual(MessageID.parseList("bare@x.com"), [mid("bare@x.com")])
         XCTAssertEqual(MessageID.parseList("   "), [])
+        // Empty/garbage tokens between valid ones are dropped; order is preserved.
+        XCTAssertEqual(MessageID.parseList("<a@x.com> <> <b@x.com>"),
+                       [mid("a@x.com"), mid("b@x.com")])
     }
 
     /// Threading is bracket-safe by construction: a reply's inReplyTo and the
@@ -179,7 +193,7 @@ final class ModelTests: XCTestCase {
     func testThreadingComparisonIsBracketSafe() {
         let parentID = MessageID(parsing: "<parent@x.com>")!          // from ENVELOPE (bracketed)
         let reply = Envelope(inReplyTo: MessageID(parsing: "parent@x.com"),  // however framed
-                             messageID: MessageID(value: "child@x.com"))
+                             messageID: mid("child@x.com"))
         XCTAssertEqual(reply.inReplyTo, parentID)
         XCTAssertTrue([parentID].contains(reply.inReplyTo!))
     }

@@ -15,7 +15,8 @@ either a mechanical rename or a behaviour you were unlikely to depend on.
 | `listMessages`, `fetchMessageBySequence` | removed | use the UID-based equivalents |
 | `searchMessagesComplex` | removed | use `searchMessages(in:matching:)` |
 | `MimePart.body` | removed | use `decodedText` / `decodedData` |
-| `messageID` / `inReplyTo` / `references` | now `MessageID` (was `String`) | read `.value` / `.bracketed` |
+| `messageID` / `inReplyTo` | now `MessageID?` (was `String?`) | read `.value` / `.bracketed` |
+| `references` | now `[MessageID]` (was `String?`) | iterate; `.value` / `.bracketed` per entry |
 | Targeted `expunge`/`delete` | throws without UIDPLUS | catch, or use `expunge(mailbox:)` |
 | `SequenceSet.set([])` | precondition failure | guard `isEmpty` before calling |
 
@@ -155,9 +156,6 @@ model? Normalise the same way with the stateless parsers:
 let mid  = MessageID(parsing: headers["Message-Id"] ?? "")      // MessageID?
 let refs = MessageID.parseList(headers["References"] ?? "")      // [MessageID]
 ```
-
-The 2.0-prerelease `MessageSummary.referenceIDs` accessor is removed — use
-`references` (now `[MessageID]`).
 
 ## Behavioural: targeted expunge/delete require UIDPLUS
 
