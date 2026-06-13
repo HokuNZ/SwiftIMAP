@@ -25,6 +25,7 @@ class MockIMAPServer {
     private var _receivedContinuations: [String] = []
     private var _closeAfterKeywords: Set<String> = []
     private var _closeOnceKeywords: Set<String> = []
+    private var _blackHoleKeywords: Set<String> = []
 
     var receivedCommands: [String] {
         lock.withLock { Array(_receivedCommands) }
@@ -66,6 +67,13 @@ class MockIMAPServer {
     /// command successfully on its second attempt.
     func closeOnceAfterResponse(toCommandContaining keyword: String) {
         lock.withLock { _ = _closeOnceKeywords.insert(keyword.uppercased()) }
+    }
+
+    /// Accept a matching command but never respond (no bytes written), leaving
+    /// the client command pending. Simulates a server that goes silent
+    /// mid-session — used to exercise client-side bounds (e.g. disconnect()).
+    func blackHoleCommand(containing keyword: String) {
+        lock.withLock { _ = _blackHoleKeywords.insert(keyword.uppercased()) }
     }
 
     func shouldCloseAfter(_ command: String) -> Bool {
@@ -123,6 +131,13 @@ class MockIMAPServer {
     private func handleCommandLocked(_ command: String) -> String {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         _receivedCommands.append(trimmed)
+
+        // Black hole: record the command but never answer it (empty response =
+        // no bytes written), simulating a server that accepts a command then
+        // goes silent. Used to exercise client-side bounds/timeouts.
+        if _blackHoleKeywords.contains(where: { trimmed.uppercased().contains($0) }) {
+            return ""
+        }
 
         if let pendingTag = _pendingAuthTag {
             _receivedContinuations.append(trimmed)
