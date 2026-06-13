@@ -285,14 +285,14 @@ final class MIMEParsingTests: XCTestCase {
     /// twice yields equal values; differing bodies are unequal.
     func testParsedMimeMessageEquatableConformance() throws {
         let raw = "Content-Type: text/plain; charset=utf-8\r\n\r\nbody one"
-        let a = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
-        let b = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
-        XCTAssertEqual(a, b)
-        XCTAssertEqual(a.parts, b.parts)
+        let first = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+        let second = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.parts, second.parts)
 
         let other = raw.replacingOccurrences(of: "body one", with: "body two")
-        let c = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(other.utf8)))
-        XCTAssertNotEqual(a, c)
+        let differing = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(other.utf8)))
+        XCTAssertNotEqual(first, differing)
     }
 
     /// Equality on the MimePart decode-failure branch (where rawBody is
