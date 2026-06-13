@@ -149,9 +149,9 @@ final class ModelTests: XCTestCase {
         XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
     }
 
-    /// #48 (E1): referenceIDs parses the raw References header into bare
-    /// message-IDs, stripping angle brackets and accepting space or comma
-    /// separators; nil/blank references yields an empty array.
+    /// referenceIDs parses the raw References header into bare message-IDs,
+    /// stripping angle brackets and accepting space or comma separators;
+    /// nil/blank references yields an empty array.
     func testReferenceIDsParsing() {
         func summary(references: String?) -> MessageSummary {
             MessageSummary(uid: 1, sequenceNumber: 1, internalDate: Date(), size: 0, references: references)

@@ -14,11 +14,12 @@ public enum IMAPError: Error, LocalizedError {
     case invalidArgument(String)
     /// A write guarded by `expectedUIDValidity` was refused because the
     /// mailbox's `UIDVALIDITY` no longer matches: the UIDs the caller holds
-    /// refer to a different incarnation of the mailbox. No command was sent.
+    /// refer to a different incarnation of the mailbox. No write command was
+    /// sent (a `SELECT` is issued to read the validity).
     case uidValidityChanged(expected: UInt32, actual: UInt32)
     /// A write guarded by `expectedUIDValidity` was refused because the server's
     /// `SELECT` response carried no `UIDVALIDITY`, so validity could not be
-    /// verified. No command was sent. (RFC 3501 requires a non-zero
+    /// verified. No write command was sent. (RFC 3501 requires a non-zero
     /// `UIDVALIDITY`, so its absence means the guard cannot be honoured.)
     case uidValidityUnavailable(expected: UInt32)
 

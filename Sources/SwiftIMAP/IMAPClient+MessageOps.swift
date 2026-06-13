@@ -193,10 +193,11 @@ extension IMAPClient {
                 .uid(.move(sequence: .single(uid), mailbox: destinationMailbox))
             )
         } else {
-            // Fallback: COPY + mark as deleted. The validity check rides on the
-            // copy's SELECT, so a mismatch is caught before anything is sent.
+            // Fallback: COPY + mark as deleted. Both steps carry the validity
+            // check — guarding only the COPY would let the deletion STORE run on
+            // stale UIDs if UIDVALIDITY changed between the two SELECTs.
             try await copyMessage(uid: uid, from: sourceMailbox, to: destinationMailbox, expectedUIDValidity: expectedUIDValidity)
-            try await markForDeletion(uid: uid, in: sourceMailbox)
+            try await storeFlags(uid: uid, in: sourceMailbox, flags: [.deleted], action: .add, expectedUIDValidity: expectedUIDValidity)
         }
     }
 
@@ -213,12 +214,12 @@ extension IMAPClient {
                 .uid(.move(sequence: sequence, mailbox: destinationMailbox))
             )
         } else {
-            // Fallback: COPY + mark as deleted. The validity check rides on the
-            // copy's SELECT, so a mismatch is caught before anything is sent.
+            // Fallback: COPY + mark as deleted (one batched STORE). Both steps
+            // carry the validity check — guarding only the COPY would let the
+            // deletion STORE run on stale UIDs if UIDVALIDITY changed between the
+            // two SELECTs.
             try await copyMessages(uids: uids, from: sourceMailbox, to: destinationMailbox, expectedUIDValidity: expectedUIDValidity)
-            for uid in uids {
-                try await markForDeletion(uid: uid, in: sourceMailbox)
-            }
+            try await storeFlags(uids: uids, in: sourceMailbox, flags: [.deleted], action: .add, expectedUIDValidity: expectedUIDValidity)
         }
     }
 
