@@ -161,6 +161,80 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// #47: results follow the SEARCH result order, not numeric/ascending order.
+    /// SequenceSet.set sorts the UIDs on the wire, so a non-ascending SEARCH
+    /// result is the only fixture that proves the result tracks searched order
+    /// rather than the sorted wire order.
+    func testSearchMessagesFollowsSearchOrderNotAscending() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        // SEARCH returns descending; result must follow this order, not 100,300.
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 300 100")
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 100 FLAGS () INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 10 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"First\" ((NIL NIL \"s\" \"x.com\")) NIL NIL ((NIL NIL \"r\" \"x.com\")) NIL NIL NIL \"<1@x.com>\"))\r\n* 3 FETCH (UID 300 FLAGS () INTERNALDATE \"03-Jan-2024 12:00:00 +0000\" RFC822.SIZE 30 ENVELOPE (\"Wed, 3 Jan 2024 12:00:00 +0000\" \"Third\" ((NIL NIL \"s\" \"x.com\")) NIL NIL ((NIL NIL \"r\" \"x.com\")) NIL NIL NIL \"<3@x.com>\"))")
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summaries = try await client.searchMessages(in: "INBOX", criteria: .all)
+        XCTAssertEqual(summaries.map { $0.uid }, [300, 100],
+                       "Result must follow SEARCH order (300, 100), not ascending order")
+
+        await client.disconnect()
+    }
+
+    /// #47: a limit drives the batched fetch end-to-end — only the most-recent
+    /// UIDs are fetched, and if the server returns extras they are dropped.
+    func testSearchMessagesWithLimitFetchesOnlyLimitedUIDs() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 100 200 300 400")
+        // Server returns all four even though only the last two were requested;
+        // the client must fetch only 300,400 and drop the unrequested 100,200.
+        mockServer.setResponse(for: "UID FETCH", response: [100, 200, 300, 400].map { uid in
+            "* \(uid) FETCH (UID \(uid) FLAGS () INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 10 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"S\" ((NIL NIL \"s\" \"x.com\")) NIL NIL ((NIL NIL \"r\" \"x.com\")) NIL NIL NIL \"<\(uid)@x.com>\"))"
+        }.joined(separator: "\r\n"))
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summaries = try await client.searchMessages(in: "INBOX", criteria: .all, limit: 2)
+        XCTAssertEqual(summaries.map { $0.uid }, [300, 400],
+                       "Only the most-recent 2 UIDs should be returned")
+
+        // The batched FETCH command must request only the limited UIDs.
+        let fetchCommand = mockServer.receivedCommands.first { $0.uppercased().contains("UID FETCH") } ?? ""
+        XCTAssertTrue(fetchCommand.contains("300") && fetchCommand.contains("400"))
+        XCTAssertFalse(fetchCommand.contains("100") || fetchCommand.contains("200"),
+                       "The FETCH must not request UIDs outside the limit: \(fetchCommand)")
+
+        await client.disconnect()
+    }
+
+    /// #47: a FETCH response carrying a UID that was not requested (the rewrite's
+    /// new failure mode — under the old per-UID loop this was impossible) is
+    /// dropped, not mis-attributed.
+    func testSearchMessagesDropsUnrequestedUIDs() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 100 200")
+        // Server slips in an unrequested UID 999 between the two requested ones.
+        mockServer.setResponse(for: "UID FETCH", response: [100, 999, 200].map { uid in
+            "* \(uid) FETCH (UID \(uid) FLAGS () INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 10 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"S\" ((NIL NIL \"s\" \"x.com\")) NIL NIL ((NIL NIL \"r\" \"x.com\")) NIL NIL NIL \"<\(uid)@x.com>\"))"
+        }.joined(separator: "\r\n"))
+
+        let client = makeClient()
+        try await client.connect()
+
+        let summaries = try await client.searchMessages(in: "INBOX", criteria: .all)
+        XCTAssertEqual(summaries.map { $0.uid }, [100, 200],
+                       "An unrequested UID in the response must be dropped, not mis-attributed")
+
+        await client.disconnect()
+    }
+
     // MARK: - Edge Cases
 
     /// Test listMessageUIDs with complex search criteria
