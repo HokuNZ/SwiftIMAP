@@ -267,7 +267,7 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         await client.disconnect()
     }
 
-    // MARK: - expectedUIDValidity guard (#48 / E2)
+    // MARK: - expectedUIDValidity guard
 
     /// A write with a matching expectedUIDValidity proceeds normally.
     func testWriteWithMatchingUIDValidityProceeds() async throws {
@@ -390,6 +390,36 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         let commands = mockServer.receivedCommands.map { $0.uppercased() }
         XCTAssertFalse(commands.contains { $0.contains("UID COPY") }, "No COPY on validity mismatch")
         XCTAssertFalse(commands.contains { $0.contains("UID STORE") }, "No \\Deleted STORE on validity mismatch")
+        await client.disconnect()
+    }
+
+    /// In the MOVE COPY-fallback, when UIDVALIDITY changes between the COPY's
+    /// SELECT (which matches) and the deletion's SELECT (which does not), the
+    /// deletion STORE is guarded too: it throws rather than deleting against
+    /// stale UIDs. The COPY happened; the STORE did not.
+    func testMoveCopyFallbackGuardsDeletionAfterValidityChangesMidway() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")  // no MOVE
+        // First SELECT (for COPY) reports 12345 (matches); second SELECT (for the
+        // deletion STORE) reports 999 (changed mid-operation).
+        mockServer.setResponseSequence(for: "SELECT", responses: [
+            "* OK [UIDVALIDITY 12345]",
+            "* OK [UIDVALIDITY 999]"
+        ])
+        mockServer.setResponse(for: "UID COPY", response: "OK Copy completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        do {
+            try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive", expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityChanged when validity changes before the deletion STORE")
+        } catch let IMAPError.uidValidityChanged(expected, actual) {
+            XCTAssertEqual(expected, 12345)
+            XCTAssertEqual(actual, 999)
+        }
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertTrue(commands.contains { $0.contains("UID COPY") }, "The COPY (validity matched) should have been sent")
+        XCTAssertFalse(commands.contains { $0.contains("UID STORE") },
+                       "The deletion STORE must not run once validity changed")
         await client.disconnect()
     }
 }
