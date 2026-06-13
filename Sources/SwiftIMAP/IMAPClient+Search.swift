@@ -42,19 +42,53 @@ extension IMAPClient {
             uids
         }
 
-        // Fetch details for each message by UID (stable identifier)
-        var summaries: [MessageSummary] = []
-        for uid in uidsToFetch {
-            if let summary = try await fetchMessage(uid: uid, in: mailbox, items: fetchItems) {
-                summaries.append(summary)
-            } else {
-                // Message may have been deleted between search and fetch - this is expected
-                // in concurrent access scenarios and is why we use UIDs (to avoid wrong message)
-                logger.debug("UID \(uid) not found during fetch - message may have been deleted")
-            }
-        }
+        // Fetch all matching messages in a single UID FETCH rather than one round
+        // trip per UID. Reconnect-and-retry is safe (a fetch is an idempotent
+        // read), matching fetchMessage.
+        return try await retryHandler.executeWithReconnect(
+            operation: "searchMessages.fetch",
+            needsReconnect: { error in
+                (error as? IMAPError)?.requiresReconnection ?? false
+            },
+            reconnect: {
+                try await self.connect()
+            },
+            work: {
+                _ = try await self.selectMailbox(mailbox)
 
-        return summaries
+                // Ensure UID is fetched so each response can be mapped back to its
+                // requested UID (responses may arrive in any order, and a UID may
+                // be absent if the message was deleted between search and fetch).
+                let hasUID = fetchItems.contains { if case .uid = $0 { return true } else { return false } }
+                let items = hasUID ? fetchItems : [.uid] + fetchItems
+
+                let responses = try await self.connection.sendCommand(
+                    .uid(.fetch(sequence: .set(uidsToFetch), items: items))
+                )
+
+                var byUID: [UID: MessageSummary] = [:]
+                for response in responses {
+                    guard case let .untagged(.fetch(seqNum, attributes)) = response else { continue }
+                    let responseUID = attributes.compactMap { attribute -> UID? in
+                        if case .uid(let fetchedUID) = attribute { return fetchedUID }
+                        return nil
+                    }.first
+                    guard let responseUID else {
+                        self.logger.warning("FETCH response missing UID attribute during searchMessages")
+                        continue
+                    }
+                    byUID[responseUID] = try self.parseMessageSummary(sequenceNumber: seqNum, attributes: attributes)
+                }
+
+                // Preserve the requested order; drop UIDs the server did not return
+                // (deleted between search and fetch — expected under concurrent access).
+                return uidsToFetch.compactMap { uid in
+                    if let summary = byUID[uid] { return summary }
+                    self.logger.debug("UID \(uid) not found during fetch - message may have been deleted")
+                    return nil
+                }
+            }
+        )
     }
 
     /// Convenience method to search by multiple criteria using AND
