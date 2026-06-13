@@ -204,9 +204,17 @@ actor ConnectionActor {
         guard connectionState != .disconnected else { return }
         
         if let channel = channel {
-            try? await channel.close()
+            do {
+                try await channel.close()
+            } catch {
+                // Teardown continues regardless (we still reset state and clean
+                // up below), but a channel that fails to close — most likely on
+                // the wedged/dead-channel path that bounded disconnect() targets
+                // — should be diagnosable rather than silently swallowed.
+                logger.debug("Channel close during disconnect failed (continuing teardown): \(error.localizedDescription)")
+            }
         }
-        
+
         connectionState = .disconnected
         await cleanup()
     }

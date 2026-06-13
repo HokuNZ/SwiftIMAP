@@ -133,9 +133,10 @@ extension IMAPClient {
         in mailbox: String,
         peek: Bool = true
     ) async throws -> Data? {
-        // A body fetch is a read (idempotent), so reconnect-and-retry on a lost
-        // connection is safe — matching fetchMessage. The peek default also means
-        // the retry does not double-clear \Seen.
+        // A body fetch is an idempotent read, so reconnect-and-retry on a lost
+        // connection is safe — matching fetchMessage. (Even with peek: false a
+        // retried BODY[] only re-sets \Seen, which is idempotent; with the peek
+        // default it does not touch \Seen at all.)
         try await retryHandler.executeWithReconnect(
             operation: "fetchMessageBody",
             needsReconnect: { error in

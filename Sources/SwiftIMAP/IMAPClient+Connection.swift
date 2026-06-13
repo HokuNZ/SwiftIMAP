@@ -110,7 +110,9 @@ extension IMAPClient {
         // either wins, close the connection. Closing resumes a still-pending
         // LOGOUT via teardown, so the group drains immediately rather than
         // blocking on the dead channel. A fast, healthy LOGOUT still returns at
-        // once — we do not wait out the bound.
+        // once — we do not wait out the bound. Note a bounded-out LOGOUT is
+        // resolved by that teardown, so it logs as `connectionClosed`, not
+        // `timeout`.
         let logoutBound = min(configuration.commandTimeout, 5)
         let boundNanos = UInt64(max(0, logoutBound) * 1_000_000_000)
 
