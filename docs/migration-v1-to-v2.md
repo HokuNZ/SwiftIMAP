@@ -15,6 +15,7 @@ either a mechanical rename or a behaviour you were unlikely to depend on.
 | `listMessages`, `fetchMessageBySequence` | removed | use the UID-based equivalents |
 | `searchMessagesComplex` | removed | use `searchMessages(in:matching:)` |
 | `MimePart.body` | removed | use `decodedText` / `decodedData` |
+| `messageID` / `inReplyTo` / `references` | now `MessageID` (was `String`) | read `.value` / `.bracketed` |
 | Targeted `expunge`/`delete` | throws without UIDPLUS | catch, or use `expunge(mailbox:)` |
 | `SequenceSet.set([])` | precondition failure | guard `isEmpty` before calling |
 
@@ -126,6 +127,38 @@ let text = part.decodedText      // decoded text, raw fallback on decode failure
 let data = part.decodedData      // decoded bytes (e.g. for attachments)
 ```
 
+## Message identifiers are now `MessageID`
+
+`Envelope.messageID`, `Envelope.inReplyTo`, and each entry of
+`MessageSummary.references` are now `MessageID` values rather than `String`s.
+`MessageID` canonicalises to the bare form (no angle brackets), so identifiers
+compare equal regardless of how the server framed them — threading needs no
+bracket-stripping.
+
+```swift
+// 1.x — String, bracketed, compared by hand
+if msg.envelope?.messageID == "<\(parentId)>" { ... }
+let refs = (summary.references ?? "").split(separator: " ").map { /* strip <> */ }
+
+// 2.0
+if msg.envelope?.messageID == parentMessageID { ... }   // MessageID == MessageID
+let refs: [MessageID] = summary.references               // already parsed, ordered
+
+id.value        // "abc@host"  — bare canonical identity (also `description`)
+id.bracketed    // "<abc@host>" — to write into an outgoing header
+```
+
+Working from raw header strings (e.g. a full-message fetch) rather than the
+model? Normalise the same way with the stateless parsers:
+
+```swift
+let mid  = MessageID(parsing: headers["Message-Id"] ?? "")      // MessageID?
+let refs = MessageID.parseList(headers["References"] ?? "")      // [MessageID]
+```
+
+The 2.0-prerelease `MessageSummary.referenceIDs` accessor is removed — use
+`references` (now `[MessageID]`).
+
 ## Behavioural: targeted expunge/delete require UIDPLUS
 
 `expunge(uids:in:)`, `deleteMessage(uid:in:)`, and `deleteMessages(uids:in:)`
@@ -152,8 +185,8 @@ These are not required changes, but 2.0 lets you remove workarounds:
 - **`STATUS`-then-write UIDVALIDITY guards**: pass `expectedUIDValidity:` to
   `storeFlags` / `moveMessage(s)` / `copyMessage(s)` / `expunge(uids:)` instead.
   The check rides on the operation's own `SELECT` (atomic, no extra round trip).
-- **Manual References parsing**: use `MessageSummary.referenceIDs` for the
-  header parsed into bare message-IDs.
+- **Manual message-ID bracket handling**: identifiers are now `MessageID`
+  (see below), so threading comparisons need no bracket-stripping.
 - **Fire-and-forget `disconnect()`**: `disconnect()` now bounds a hung `LOGOUT`
   itself (`min(commandTimeout, 5s)`).
 
