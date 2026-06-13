@@ -248,11 +248,12 @@ do {
 }
 ```
 
-> **Migrating from 1.x:** `IMAPError` changed shape in 2.0. `commandFailed` now carries
-> an `IMAPServerResponse` (was `command`/`response` strings); `connectionClosed`,
-> `connectionFailed`, `tlsError`, and `timeout` gained associated values; and the
-> never-thrown cases `mailboxNotFound`, `messageNotFound`, `quotaExceeded`, and
-> `permissionDenied` were removed (use `IMAPServerResponse`'s accessors instead).
+> When switching over `IMAPError` (or any other library enum), include a `default:`
+> arm — new cases may be added in minor releases. See [API stability](#api-stability).
+
+> **Migrating from 1.x?** `IMAPError` was reshaped and some APIs were removed or
+> tightened in 2.0. See the [migration guide](docs/migration-v1-to-v2.md) for the
+> full list and the replacement for each change.
 
 ## Testing
 
@@ -275,6 +276,29 @@ SwiftIMAP is built with a layered architecture:
 1. **Network Layer** (SwiftNIO + NIOSSL): Handles TCP connections and TLS
 2. **Protocol Layer** (Parser/Encoder): Implements IMAP protocol parsing and encoding
 3. **API Layer** (IMAPClient): Provides high-level async/await APIs
+
+## API stability
+
+SwiftIMAP follows [semantic versioning](https://semver.org). Breaking changes
+to the public API land only in major releases.
+
+**Enums may grow in minor releases.** Public enums — `IMAPError`,
+`IMAPResponse.ResponseCode`, `IMAPCommand.SearchCriteria`, and others — may gain
+new cases in a minor release. When you switch over one, always include a
+`default:` arm so a new case doesn't break your build:
+
+```swift
+switch error {
+case .commandFailed(let response): ...
+case .connectionClosed(let response): ...
+default: log.error("\(error.localizedDescription)")   // tolerates future cases
+}
+```
+
+(Swift source packages can't use `@unknown default`, so a plain `default` is the
+tool here.)
+
+Upgrading across a major? See the [1.x → 2.0 migration guide](docs/migration-v1-to-v2.md).
 
 ## Security
 
