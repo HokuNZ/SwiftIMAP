@@ -19,44 +19,122 @@ private final class SASLInitialResponseState: @unchecked Sendable {
     }
 }
 
+/// Serialises connect attempts
+actor ConnectCoordinator {
+    private var inFlight: Task<Void, Error>?
+
+    func run(_ work: @escaping @Sendable () async throws -> Void) async throws {
+        if let inFlight {
+            try await inFlight.value
+            return
+        }
+        let task = Task { try await work() }
+        inFlight = task
+        defer { inFlight = nil }
+        try await task.value
+    }
+}
+
 extension IMAPClient {
+    /// Establish (or re-establish) the connection and authenticate.
+    ///
+    /// - on an already-connected, healthy client: no-op;
+    /// - on a disconnected or stale client (e.g. the connection dropped): reconnect and reauthenticate
+    /// - concurrent calls coalesce onto a single attempt — the second caller awaits the in-flight attempt instead of failing with `invalidState`.
     public func connect() async throws {
+        try await connectCoordinator.run { [self] in
+            if await connection.isHealthy() {
+                return
+            }
+            try await connectAttempt()
+        }
+    }
+
+    private func connectAttempt() async throws {
         try await retryHandler.execute(operation: "connect") {
-            let greeting = try await self.connection.connect()
-            let preauthenticated = {
-                if case .untagged(.status(.preauth(_, _))) = greeting {
-                    return true
-                }
-                return false
-            }()
-
-            if case .untagged(.status(.bye(_, _))) = greeting {
-                throw IMAPError.connectionClosed
-            }
-
-            let capabilities = try await self.capability()
-
-            if self.configuration.tlsMode == .startTLS {
-                if preauthenticated {
-                    throw IMAPError.invalidState("STARTTLS not permitted after PREAUTH")
-                }
-                if capabilities.contains("STARTTLS") {
-                    try await self.startTLS()
-                    _ = try await self.capability()
-                } else {
-                    throw IMAPError.unsupportedCapability("STARTTLS")
-                }
-            }
-
-            if !preauthenticated {
-                try await self.authenticate()
+            do {
+                try await self.establishSession()
+            } catch {
+                // A failed attempt must not leave a half-established session
+                await self.connection.disconnect()
+                throw error
             }
         }
     }
 
+    private func establishSession() async throws {
+        let greeting = try await self.connection.connect()
+        let preauthenticated = {
+            if case .untagged(.status(.preauth(_, _))) = greeting {
+                return true
+            }
+            return false
+        }()
+
+        if case .untagged(.status(.bye(let code, let text))) = greeting {
+            let response = IMAPServerResponse(
+                status: .bye,
+                code: code,
+                text: text,
+                commandName: "CONNECT"
+            )
+            throw IMAPError.connectionClosed(response)
+        }
+
+        let capabilities = try await self.capability()
+
+        if self.configuration.tlsMode == .startTLS {
+            if preauthenticated {
+                throw IMAPError.invalidState("STARTTLS not permitted after PREAUTH")
+            }
+            if capabilities.contains("STARTTLS") {
+                try await self.startTLS()
+                _ = try await self.capability()
+            } else {
+                throw IMAPError.unsupportedCapability("STARTTLS")
+            }
+        }
+
+        if !preauthenticated {
+            try await self.authenticate()
+            // Refresh the capability cache after authentication,
+            // Some servers only announce full capabilities after auth completes.
+            _ = try await self.capability()
+        }
+    }
+
     public func disconnect() async {
-        _ = try? await logout()
-        await connection.disconnect()
+        // Bound the LOGOUT so a dead-but-open channel cannot make disconnect()
+        // wait the full commandTimeout (default 60s): sendCommand is not
+        // cancellation-aware, so we race LOGOUT against a short sleep and, when
+        // either wins, close the connection. Closing resumes a still-pending
+        // LOGOUT via teardown, so the group drains immediately rather than
+        // blocking on the dead channel. A fast, healthy LOGOUT still returns at
+        // once — we do not wait out the bound. Note a bounded-out LOGOUT is
+        // resolved by that teardown, so it logs as `connectionClosed`, not
+        // `timeout`.
+        // Guard against a non-finite or non-positive commandTimeout: min/max
+        // propagate NaN and UInt64(NaN/∞) traps. A misconfigured timeout falls
+        // back to the 5s cap rather than crashing disconnect().
+        let configured = configuration.commandTimeout
+        let logoutBound = (configured.isFinite && configured > 0) ? Swift.min(configured, 5) : 5
+        let boundNanos = UInt64(logoutBound * 1_000_000_000)
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                do {
+                    _ = try await self.logout()
+                } catch {
+                    self.logger.debug("LOGOUT during disconnect failed (ignored): \(error.localizedDescription)")
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: boundNanos)
+            }
+            await group.next()
+            await self.connection.disconnect()
+            group.cancelAll()
+        }
     }
 
     public func capability() async throws -> Set<String> {
@@ -96,7 +174,14 @@ extension IMAPClient {
             throw IMAPError.unsupportedCapability("LOGINDISABLED")
         }
 
-        _ = try await connection.sendCommand(.login(username: username, password: password))
+        do {
+            _ = try await connection.sendCommand(.login(username: username, password: password))
+        } catch IMAPError.commandFailed(let response) {
+            // A NO/BAD completion of LOGIN is an authentication failure, not a
+            // generic command failure: surface it as such, carrying the server
+            // response so callers can inspect the code and text.
+            throw IMAPError.authenticationFailed("Server rejected LOGIN", response: response)
+        }
         await connection.setAuthenticated()
     }
 
@@ -113,17 +198,23 @@ extension IMAPClient {
             responseHandler: responseHandler
         )
 
-        _ = try await connection.sendCommand(
-            .authenticate(mechanism: mechanism, initialResponse: commandInitialResponse),
-            continuationHandler: continuationHandler
-        )
+        do {
+            _ = try await connection.sendCommand(
+                .authenticate(mechanism: mechanism, initialResponse: commandInitialResponse),
+                continuationHandler: continuationHandler
+            )
+        } catch IMAPError.commandFailed(let response) {
+            // As with LOGIN: a NO/BAD completion of AUTHENTICATE is an
+            // authentication failure carrying the server's response.
+            throw IMAPError.authenticationFailed("Server rejected AUTHENTICATE", response: response)
+        }
         await connection.setAuthenticated()
     }
 
     private func authenticatePlain(username: String, password: String) async throws {
         let authString = "\0\(username)\0\(password)"
         guard let authData = authString.data(using: .utf8) else {
-            throw IMAPError.authenticationFailed("Failed to encode credentials")
+            throw IMAPError.authenticationFailed("Failed to encode credentials", response: nil)
         }
 
         let base64Auth = authData.base64EncodedString()
@@ -138,7 +229,7 @@ extension IMAPClient {
     private func authenticateOAuth2(username: String, accessToken: String) async throws {
         let authString = "user=\(username)\u{01}auth=Bearer \(accessToken)\u{01}\u{01}"
         guard let authData = authString.data(using: .utf8) else {
-            throw IMAPError.authenticationFailed("Failed to encode OAuth2 credentials")
+            throw IMAPError.authenticationFailed("Failed to encode OAuth2 credentials", response: nil)
         }
 
         let base64Auth = authData.base64EncodedString()

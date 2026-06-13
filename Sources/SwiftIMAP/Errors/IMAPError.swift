@@ -1,63 +1,65 @@
 import Foundation
 
 public enum IMAPError: Error, LocalizedError {
-    case connectionFailed(String)
-    case connectionError(String)
-    case connectionClosed
-    case authenticationFailed(String)
-    case tlsError(String)
+    case connectionFailed(String, underlying: (any Error)?)
+    case connectionClosed(IMAPServerResponse?)
+    case authenticationFailed(String, response: IMAPServerResponse?)
+    case tlsError(String, underlying: (any Error)?)
     case protocolError(String)
     case parsingError(String)
-    case commandFailed(command: String, response: String)
-    case serverError(String)
-    case timeout
-    case disconnected
+    case commandFailed(IMAPServerResponse)
+    case timeout(command: String?)
     case invalidState(String)
     case unsupportedCapability(String)
-    case mailboxNotFound(String)
-    case messageNotFound(uid: UInt32)
-    case quotaExceeded
-    case permissionDenied
     case invalidArgument(String)
-    
+    /// A write guarded by `expectedUIDValidity` was refused because the
+    /// mailbox's `UIDVALIDITY` no longer matches: the UIDs the caller holds
+    /// refer to a different incarnation of the mailbox. No write command was
+    /// sent (a `SELECT` is issued to read the validity).
+    case uidValidityChanged(expected: UInt32, actual: UInt32)
+    /// A write guarded by `expectedUIDValidity` was refused because the server's
+    /// `SELECT` response carried no `UIDVALIDITY`, so validity could not be
+    /// verified. No write command was sent. (RFC 3501 requires a non-zero
+    /// `UIDVALIDITY`, so its absence means the guard cannot be honoured.)
+    case uidValidityUnavailable(expected: UInt32)
+
     public var errorDescription: String? {
         switch self {
-        case .connectionFailed(let message):
+        case .connectionFailed(let message, _):
             return "Connection failed: \(message)"
-        case .connectionError(let message):
-            return "Connection error: \(message)"
-        case .connectionClosed:
+        case .connectionClosed(let response):
+            if let response {
+                return "Connection closed by server: \(response.line)"
+            }
             return "Connection closed unexpectedly"
-        case .authenticationFailed(let message):
+        case let .authenticationFailed(message, response):
+            if let response {
+                return "Authentication failed: \(message): \(response.line)"
+            }
             return "Authentication failed: \(message)"
-        case .tlsError(let message):
+        case .tlsError(let message, _):
             return "TLS error: \(message)"
         case .protocolError(let message):
             return "Protocol error: \(message)"
         case .parsingError(let message):
             return "Parsing error: \(message)"
-        case .commandFailed(let command, let response):
-            return "Command '\(command)' failed: \(response)"
-        case .serverError(let message):
-            return "Server error: \(message)"
-        case .timeout:
+        case .commandFailed(let response):
+            return "Command '\(response.commandName)' failed: \(response.line)"
+        case .timeout(let command):
+            if let command {
+                return "Operation '\(command)' timed out"
+            }
             return "Operation timed out"
-        case .disconnected:
-            return "Connection disconnected"
         case .invalidState(let message):
             return "Invalid state: \(message)"
         case .unsupportedCapability(let capability):
             return "Unsupported capability: \(capability)"
-        case .mailboxNotFound(let name):
-            return "Mailbox not found: \(name)"
-        case .messageNotFound(let uid):
-            return "Message not found: UID \(uid)"
-        case .quotaExceeded:
-            return "Quota exceeded"
-        case .permissionDenied:
-            return "Permission denied"
         case .invalidArgument(let message):
             return "Invalid argument: \(message)"
+        case let .uidValidityChanged(expected, actual):
+            return "Mailbox UIDVALIDITY changed: expected \(expected), got \(actual)"
+        case let .uidValidityUnavailable(expected):
+            return "Mailbox UIDVALIDITY unavailable: expected \(expected), server did not report it"
         }
     }
 }

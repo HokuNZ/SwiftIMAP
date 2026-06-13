@@ -58,7 +58,7 @@ let status = try await client.selectMailbox("INBOX")
 print("Messages in INBOX: \(status.messages)")
 
 // Search for messages
-let messageUIDs = try await client.listMessages(in: "INBOX")
+let messageUIDs = try await client.listMessageUIDs(in: "INBOX")
 
 // Fetch a message
 if let firstUID = messageUIDs.first {
@@ -179,17 +179,17 @@ let status = try await client.mailboxStatus("Sent")
 
 ```swift
 // Search messages
-let allMessages = try await client.listMessages(
+let allMessageUIDs = try await client.listMessageUIDs(
     in: "INBOX",
     searchCriteria: .all
 )
 
-let unreadMessages = try await client.listMessages(
-    in: "INBOX", 
+let unreadUIDs = try await client.listMessageUIDs(
+    in: "INBOX",
     searchCriteria: .unseen
 )
 
-let fromAlice = try await client.listMessages(
+let fromAlice = try await client.listMessageUIDs(
     in: "INBOX",
     searchCriteria: .from("alice@example.com")
 )
@@ -215,6 +215,46 @@ let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("P
 // Labels map to IMAP keywords (Gmail's X-GM-LABELS extension is not implemented)
 ```
 
+### Error Handling
+
+All operations throw `IMAPError`. When the server rejects a command, `commandFailed`
+carries a structured `IMAPServerResponse` so you can log a faithful server response
+line and distinguish causes. None of the error output includes credentials or message
+data.
+
+```swift
+do {
+    try await client.moveMessage(uid: 12345, from: "INBOX", to: "Archive")
+} catch let error as IMAPError {
+    switch error {
+    case .commandFailed(let response):
+        // response.status  -> .no / .bad
+        // response.code    -> e.g. .tryCreate, .other("OVERQUOTA", nil)
+        // response.line    -> "NO [TRYCREATE] Mailbox does not exist" (safe to log)
+        log.error("\(response.commandName) failed: \(response.line)")
+        if response.isMailboxNotFound { /* destination renamed or removed */ }
+        if response.isOverQuota { /* account over quota */ }
+    case .connectionClosed(let response):
+        // A server BYE, e.g. "BYE [ALERT] Too many connections"
+        log.error("Connection closed: \(response?.line ?? "unexpected")")
+    case .timeout(let command):
+        log.error("Timed out: \(command ?? "connection")")
+    case .connectionFailed(_, let underlying):
+        // The typed transport cause (NIO/SSL error) is preserved for inspection
+        log.error("Connect failed: \(underlying.map(String.init(describing:)) ?? "unknown")")
+    default:
+        log.error("\(error.localizedDescription)")
+    }
+}
+```
+
+> When switching over `IMAPError` (or any other library enum), include a `default:`
+> arm — new cases may be added in minor releases. See [API stability](#api-stability).
+
+> **Migrating from 1.x?** `IMAPError` was reshaped and some APIs were removed or
+> tightened in 2.0. See the [migration guide](docs/migration-v1-to-v2.md) for the
+> full list and the replacement for each change.
+
 ## Testing
 
 Run the test suite:
@@ -236,6 +276,29 @@ SwiftIMAP is built with a layered architecture:
 1. **Network Layer** (SwiftNIO + NIOSSL): Handles TCP connections and TLS
 2. **Protocol Layer** (Parser/Encoder): Implements IMAP protocol parsing and encoding
 3. **API Layer** (IMAPClient): Provides high-level async/await APIs
+
+## API stability
+
+SwiftIMAP follows [semantic versioning](https://semver.org). Breaking changes
+to the public API land only in major releases.
+
+**Enums may grow in minor releases.** Public enums — `IMAPError`,
+`IMAPResponse.ResponseCode`, `IMAPCommand.SearchCriteria`, and others — may gain
+new cases in a minor release. When you switch over one, always include a
+`default:` arm so a new case doesn't break your build:
+
+```swift
+switch error {
+case .commandFailed(let response): ...
+case .connectionClosed(let response): ...
+default: log.error("\(error.localizedDescription)")   // tolerates future cases
+}
+```
+
+(Swift source packages can't use `@unknown default`, so a plain `default` is the
+tool here.)
+
+Upgrading across a major? See the [1.x → 2.0 migration guide](docs/migration-v1-to-v2.md).
 
 ## Security
 

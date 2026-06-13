@@ -45,7 +45,11 @@ actor RetryHandler {
             }
         }
         
-        throw lastError ?? IMAPError.connectionError("Operation failed after \(configuration.maxAttempts) attempts")
+        // Unreachable in practice: maxAttempts >= 1 is enforced at construction, so
+        // the loop always sets lastError before exiting. Kept as a graceful fallback.
+        throw lastError ?? IMAPError.connectionFailed(
+            "Operation failed after \(configuration.maxAttempts) attempts", underlying: nil
+        )
     }
     
     /// Execute an operation that might need reconnection
@@ -62,44 +66,54 @@ actor RetryHandler {
                 logger.debug("[\(operation)] Attempt \(attempt) of \(configuration.maxAttempts)")
                 return try await work()
             } catch {
-                lastError = error
-                
+                // The error under consideration. If reconnection is attempted and
+                // itself fails, this becomes the reconnect error so the retryability
+                // check and the thrown/recorded error stay consistent rather than
+                // diverging from the original work() error.
+                var currentError = error
+                lastError = currentError
+
                 // Check if we need to reconnect
-                if needsReconnect(error) && attempt < configuration.maxAttempts {
+                if needsReconnect(currentError) && attempt < configuration.maxAttempts {
                     logger.warning("[\(operation)] Connection lost. Attempting to reconnect...")
                     do {
                         try await reconnect()
                         logger.info("[\(operation)] Reconnected successfully")
                         // Continue to next attempt without delay
                         continue
-                    } catch {
-                        logger.error("[\(operation)] Reconnection failed: \(error)")
-                        lastError = error
+                    } catch let reconnectError {
+                        logger.error("[\(operation)] Reconnection failed: \(reconnectError)")
+                        currentError = reconnectError
+                        lastError = reconnectError
                     }
                 }
-                
+
                 // Check if error is retryable
-                let isRetryable = isRetryableError(error)
-                
+                let isRetryable = isRetryableError(currentError)
+
                 if !isRetryable {
-                    logger.error("[\(operation)] Non-retryable error: \(error)")
-                    throw error
+                    logger.error("[\(operation)] Non-retryable error: \(currentError)")
+                    throw currentError
                 }
-                
+
                 if attempt == configuration.maxAttempts {
-                    logger.error("[\(operation)] Max attempts reached. Last error: \(error)")
+                    logger.error("[\(operation)] Max attempts reached. Last error: \(currentError)")
                     break
                 }
-                
+
                 // Calculate delay with exponential backoff and jitter
                 let delay = calculateDelay(for: attempt)
-                logger.warning("[\(operation)] Attempt \(attempt) failed: \(error). Retrying in \(String(format: "%.2f", delay))s...")
-                
+                logger.warning("[\(operation)] Attempt \(attempt) failed: \(currentError). Retrying in \(String(format: "%.2f", delay))s...")
+
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
         
-        throw lastError ?? IMAPError.connectionError("Operation failed after \(configuration.maxAttempts) attempts")
+        // Unreachable in practice: maxAttempts >= 1 is enforced at construction, so
+        // the loop always sets lastError before exiting. Kept as a graceful fallback.
+        throw lastError ?? IMAPError.connectionFailed(
+            "Operation failed after \(configuration.maxAttempts) attempts", underlying: nil
+        )
     }
     
     private func calculateDelay(for attempt: Int) -> TimeInterval {
@@ -120,15 +134,25 @@ actor RetryHandler {
         // Check for specific IMAP errors
         if let imapError = error as? IMAPError {
             switch imapError {
-            case .connectionError, .connectionClosed:
+            case .connectionClosed(let response):
+                guard configuration.retryableErrors.contains(.connectionLost) else { return false }
+                // A `BYE` that names a definitive condition (or any typed code) is the
+                // server actively rejecting us (e.g. a `* BYE` greeting), so retrying
+                // is pointless. Retry only a bare close (no response) or a BYE that
+                // names a transient condition like `[UNAVAILABLE]`.
+                if let response { return RetryHandler.isTransientServerResponse(response) }
+                return true
+            case .connectionFailed:
                 return configuration.retryableErrors.contains(.connectionLost)
             case .timeout:
                 return configuration.retryableErrors.contains(.timeout)
-            case .serverError(let message):
-                // Check for temporary server errors
-                let temporaryErrors = ["UNAVAILABLE", "TRY AGAIN", "TEMPORARY", "BUSY"]
-                let isTemporary = temporaryErrors.contains { message.uppercased().contains($0) }
-                return isTemporary && configuration.retryableErrors.contains(.temporaryFailure)
+            case .commandFailed(let response):
+                // Only NO completions can be transient; BAD is a client bug and BYE
+                // is terminal. Classify on the typed response code where present,
+                // falling back to the server's text for servers that omit codes.
+                guard response.status == .no else { return false }
+                return RetryHandler.isTransientServerResponse(response)
+                    && configuration.retryableErrors.contains(.temporaryFailure)
             default:
                 return false
             }
@@ -150,6 +174,36 @@ actor RetryHandler {
         
         return false
     }
+
+    /// Whether free-form server text names a transient condition.
+    private static func isTransientText(_ text: String) -> Bool {
+        let transient = ["UNAVAILABLE", "TRY AGAIN", "TEMPORARY", "BUSY"]
+        let upper = text.uppercased()
+        return transient.contains { upper.contains($0) }
+    }
+
+    /// Whether a `NO` server response indicates a transient, retryable condition.
+    /// Prefers the typed response code (`[UNAVAILABLE]`, `[INUSE]`, `[SERVERBUG]`),
+    /// and falls back to the response text only for servers that omit a code.
+    fileprivate static func isTransientServerResponse(_ response: IMAPServerResponse) -> Bool {
+        // UNAVAILABLE, INUSE, and SERVERBUG are RFC 5530 codes with no typed case in
+        // IMAPResponse.ResponseCode, so they always arrive as `.other`. If a named
+        // case is ever added for one of these, add it to this check too.
+        let transientCodes: Set<String> = ["UNAVAILABLE", "INUSE", "SERVERBUG"]
+        // A code, when present, is authoritative: a definitive code like
+        // `[NONEXISTENT]` must not be retried just because the free text happens to
+        // contain words like "try again". Only consult the text when no code is sent.
+        if let code = response.code {
+            if case .other(let name, _) = code {
+                return transientCodes.contains(name.uppercased())
+            }
+            return false
+        }
+        if let text = response.text {
+            return isTransientText(text)
+        }
+        return false
+    }
 }
 
 // MARK: - Error Classification
@@ -158,12 +212,15 @@ extension IMAPError {
     /// Determines if the error indicates a lost connection that requires reconnection
     var requiresReconnection: Bool {
         switch self {
-        case .connectionError, .connectionClosed:
+        case .connectionFailed:
             return true
-        case .serverError(let message):
-            // Some server errors indicate connection issues
-            let connectionErrors = ["BYE", "DISCONNECTED", "CONNECTION RESET"]
-            return connectionErrors.contains { message.uppercased().contains($0) }
+        case .connectionClosed(let response):
+            // Mirror retry classification: a BYE naming a definitive condition is
+            // the server actively rejecting us — reconnecting would only replace
+            // the BYE reason with whatever the reconnect throws. Reconnect on a
+            // bare drop (nil) or a transient condition like [UNAVAILABLE].
+            if let response { return RetryHandler.isTransientServerResponse(response) }
+            return true
         default:
             return false
         }

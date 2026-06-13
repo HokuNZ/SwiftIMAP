@@ -112,7 +112,59 @@ final class ModelTests: XCTestCase {
         XCTAssertNotNil(summary.envelope)
         XCTAssertEqual(summary.envelope?.subject, "Test Subject")
     }
-    
+
+    /// The model snapshots are Equatable so consumers can diff and assert
+    /// against whole values: MessageSummary, Envelope, BodyStructure.
+    func testModelEquatableConformance() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        func makeSummary(subject: String) -> MessageSummary {
+            MessageSummary(
+                uid: 1,
+                sequenceNumber: 1,
+                flags: [.seen],
+                keywords: ["@Triaged"],
+                internalDate: date,
+                size: 100,
+                envelope: Envelope(date: date, subject: subject,
+                                   from: [Address(name: "A", mailbox: "a", host: "x.com")]),
+                references: "<r1@x.com>"
+            )
+        }
+
+        XCTAssertEqual(makeSummary(subject: "Same"), makeSummary(subject: "Same"))
+        XCTAssertNotEqual(makeSummary(subject: "One"), makeSummary(subject: "Two"))
+
+        // Envelope: two independently-built instances with equal inputs compare
+        // equal (incl. the derived *Entries), and differ when a field differs.
+        func makeEnvelope(subject: String) -> Envelope {
+            Envelope(date: date, subject: subject,
+                     from: [Address(name: "A", mailbox: "a", host: "x.com")],
+                     to: [Address(name: nil, mailbox: "t", host: "x.com")])
+        }
+        XCTAssertEqual(makeEnvelope(subject: "S"), makeEnvelope(subject: "S"))
+        XCTAssertNotEqual(makeEnvelope(subject: "S"), makeEnvelope(subject: "T"))
+
+        let structure = BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10)
+        XCTAssertEqual(structure, BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10))
+        XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
+    }
+
+    /// referenceIDs parses the raw References header into bare message-IDs,
+    /// stripping angle brackets and accepting space or comma separators;
+    /// nil/blank references yields an empty array.
+    func testReferenceIDsParsing() {
+        func summary(references: String?) -> MessageSummary {
+            MessageSummary(uid: 1, sequenceNumber: 1, internalDate: Date(), size: 0, references: references)
+        }
+
+        XCTAssertEqual(summary(references: "<a@x.com> <b@y.com>").referenceIDs, ["a@x.com", "b@y.com"])
+        XCTAssertEqual(summary(references: "<a@x.com>,<b@y.com>").referenceIDs, ["a@x.com", "b@y.com"])
+        XCTAssertEqual(summary(references: "  <only@x.com>  ").referenceIDs, ["only@x.com"])
+        XCTAssertEqual(summary(references: "bare@x.com").referenceIDs, ["bare@x.com"])
+        XCTAssertEqual(summary(references: nil).referenceIDs, [])
+        XCTAssertEqual(summary(references: "   ").referenceIDs, [])
+    }
+
     func testSequenceSetStringValue() {
         let single = IMAPCommand.SequenceSet.single(42)
         XCTAssertEqual(single.stringValue, "42")

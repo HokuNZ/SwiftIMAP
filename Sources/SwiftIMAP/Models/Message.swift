@@ -3,7 +3,7 @@ import Foundation
 public typealias UID = UInt32
 public typealias MessageSequenceNumber = UInt32
 
-public struct MessageSummary: Sendable {
+public struct MessageSummary: Sendable, Equatable {
     public let uid: UID
     public let sequenceNumber: MessageSequenceNumber
     /// The standard RFC 3501 system flags (see `Flag`).
@@ -18,6 +18,30 @@ public struct MessageSummary: Sendable {
     /// Populated when the fetch includes a `BODY[HEADER.FIELDS (REFERENCES)]`
     /// item (with or without `.PEEK`).
     public let references: String?
+
+    /// The `references` header parsed into bare message-IDs, angle brackets
+    /// stripped (e.g. `["a@x.com", "b@y.com"]` for `"<a@x.com> <b@y.com>"`).
+    /// Empty when `references` is `nil` or blank.
+    ///
+    /// Per RFC 5322 message-ids are whitespace-separated; some clients use
+    /// commas, so both are accepted. Use this for threading; use `references`
+    /// for the raw header value.
+    ///
+    /// - Note: a comma inside a quoted-string local part (e.g. `<"a,b"@host>`,
+    ///   legal but vanishingly rare) would be split. The threading use case
+    ///   tolerates this; read `references` if you need the exact tokens.
+    public var referenceIDs: [String] {
+        guard let references else { return [] }
+        return references
+            .split { " \t\r\n,".contains($0) }
+            .map { token in
+                var id = Substring(token)
+                if id.hasPrefix("<") { id = id.dropFirst() }
+                if id.hasSuffix(">") { id = id.dropLast() }
+                return String(id)
+            }
+            .filter { !$0.isEmpty }
+    }
 
     public init(
         uid: UID,
@@ -77,7 +101,7 @@ public enum AddressListEntry: Sendable, Hashable {
     case group(name: String, members: [Address])
 }
 
-public struct Envelope: Sendable {
+public struct Envelope: Sendable, Equatable {
     public let date: Date?
     public let subject: String?
     public let from: [Address]
@@ -132,7 +156,7 @@ public struct Envelope: Sendable {
     }
 }
 
-public struct BodyStructure: Sendable {
+public struct BodyStructure: Sendable, Equatable {
     public let type: String
     public let subtype: String
     public let parameters: [String: String]
