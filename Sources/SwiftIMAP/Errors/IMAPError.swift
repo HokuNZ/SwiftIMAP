@@ -16,6 +16,11 @@ public enum IMAPError: Error, LocalizedError {
     /// mailbox's `UIDVALIDITY` no longer matches: the UIDs the caller holds
     /// refer to a different incarnation of the mailbox. No command was sent.
     case uidValidityChanged(expected: UInt32, actual: UInt32)
+    /// A write guarded by `expectedUIDValidity` was refused because the server's
+    /// `SELECT` response carried no `UIDVALIDITY`, so validity could not be
+    /// verified. No command was sent. (RFC 3501 requires a non-zero
+    /// `UIDVALIDITY`, so its absence means the guard cannot be honoured.)
+    case uidValidityUnavailable(expected: UInt32)
 
     public var errorDescription: String? {
         switch self {
@@ -52,6 +57,8 @@ public enum IMAPError: Error, LocalizedError {
             return "Invalid argument: \(message)"
         case let .uidValidityChanged(expected, actual):
             return "Mailbox UIDVALIDITY changed: expected \(expected), got \(actual)"
+        case let .uidValidityUnavailable(expected):
+            return "Mailbox UIDVALIDITY unavailable: expected \(expected), server did not report it"
         }
     }
 }
