@@ -295,6 +295,28 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertNotEqual(a, c)
     }
 
+    /// #49: equality on the MimePart decode-failure branch (where rawBody is
+    /// populated, not the decoded-success branch). Two parts that both fail to
+    /// decode with the same raw body compare equal; a decoded part and a
+    /// failed-decode part with the same bytes compare unequal (they differ in
+    /// decodedData: one has bytes, the other is nil).
+    func testMimePartEqualityOnDecodeFailureBranch() throws {
+        // An unknown transfer encoding makes decodedContentData() throw, so
+        // decodedData == nil and rawBody is retained.
+        let undecodable = "Content-Type: text/plain\r\nContent-Transfer-Encoding: x-custom\r\n\r\nsame body"
+        let p1 = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(undecodable.utf8))).parts.first
+        let p2 = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(undecodable.utf8))).parts.first
+        XCTAssertEqual(p1, p2, "Two equal failed-decode parts must compare equal")
+        XCTAssertNil(p1?.decodedData)
+
+        // A decodable part with the same body text decodes to bytes, so its
+        // decodedData differs from the failed part's nil — they are unequal.
+        let decodable = "Content-Type: text/plain\r\n\r\nsame body"
+        let p3 = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(decodable.utf8))).parts.first
+        XCTAssertNotNil(p3?.decodedData)
+        XCTAssertNotEqual(p1, p3, "A failed-decode part and a decoded part must compare unequal")
+    }
+
     // Helper to create a test message summary
     private func createTestSummary() -> MessageSummary {
         MessageSummary(
