@@ -3,6 +3,23 @@ import Foundation
 extension IMAPClient {
     // MARK: - Message Manipulation
 
+    /// Select `mailbox` and, when `expectedUIDValidity` is non-nil, verify the
+    /// server's current `UIDVALIDITY` matches before the caller issues a write.
+    ///
+    /// Throws `IMAPError.uidValidityChanged` on mismatch — the caller's write
+    /// command is never sent. The check is atomic with the `SELECT` whose
+    /// response carries the validity, so there is no window (unlike a separate
+    /// `STATUS` call) in which validity could change between the check and the
+    /// write.
+    @discardableResult
+    private func selectMailbox(_ mailbox: String, verifyingUIDValidity expectedUIDValidity: UInt32?) async throws -> MailboxStatus {
+        let status = try await selectMailbox(mailbox)
+        if let expectedUIDValidity, expectedUIDValidity != status.uidValidity {
+            throw IMAPError.uidValidityChanged(expected: expectedUIDValidity, actual: status.uidValidity)
+        }
+        return status
+    }
+
     public func appendMessage(
         _ messageData: Data,
         to mailbox: String,
@@ -28,14 +45,19 @@ extension IMAPClient {
     }
 
     /// Store flags for a message (e.g., mark as read, flagged, etc.)
+    ///
+    /// - Parameter expectedUIDValidity: when non-nil, the store is refused with
+    ///   `IMAPError.uidValidityChanged` if the mailbox's current `UIDVALIDITY`
+    ///   differs, guarding against acting on UIDs from a stale mailbox view.
     public func storeFlags(
         uid: UID,
         in mailbox: String,
         flags: [Flag],
         action: IMAPCommand.StoreFlags.Action = .set,
-        silent: Bool = false
+        silent: Bool = false,
+        expectedUIDValidity: UInt32? = nil
     ) async throws {
-        _ = try await selectMailbox(mailbox)
+        _ = try await selectMailbox(mailbox, verifyingUIDValidity: expectedUIDValidity)
 
         let storeFlags = IMAPCommand.StoreFlags(action: action, flags: flags)
 
@@ -50,9 +72,10 @@ extension IMAPClient {
         in mailbox: String,
         flags: [String],
         action: IMAPCommand.StoreFlags.Action = .set,
-        silent: Bool = false
+        silent: Bool = false,
+        expectedUIDValidity: UInt32? = nil
     ) async throws {
-        _ = try await selectMailbox(mailbox)
+        _ = try await selectMailbox(mailbox, verifyingUIDValidity: expectedUIDValidity)
 
         let storeFlags = IMAPCommand.StoreFlags(action: action, flags: flags)
 
@@ -67,11 +90,12 @@ extension IMAPClient {
         in mailbox: String,
         flags: [Flag],
         action: IMAPCommand.StoreFlags.Action = .set,
-        silent: Bool = false
+        silent: Bool = false,
+        expectedUIDValidity: UInt32? = nil
     ) async throws {
         guard !uids.isEmpty else { return }
 
-        _ = try await selectMailbox(mailbox)
+        _ = try await selectMailbox(mailbox, verifyingUIDValidity: expectedUIDValidity)
 
         let storeFlags = IMAPCommand.StoreFlags(action: action, flags: flags)
         let sequence = IMAPCommand.SequenceSet.set(uids)
@@ -87,11 +111,12 @@ extension IMAPClient {
         in mailbox: String,
         flags: [String],
         action: IMAPCommand.StoreFlags.Action = .set,
-        silent: Bool = false
+        silent: Bool = false,
+        expectedUIDValidity: UInt32? = nil
     ) async throws {
         guard !uids.isEmpty else { return }
 
-        _ = try await selectMailbox(mailbox)
+        _ = try await selectMailbox(mailbox, verifyingUIDValidity: expectedUIDValidity)
 
         let storeFlags = IMAPCommand.StoreFlags(action: action, flags: flags)
         let sequence = IMAPCommand.SequenceSet.set(uids)
@@ -117,8 +142,12 @@ extension IMAPClient {
     }
 
     /// Copy a message to another mailbox
-    public func copyMessage(uid: UID, from sourceMailbox: String, to destinationMailbox: String) async throws {
-        _ = try await selectMailbox(sourceMailbox)
+    ///
+    /// - Parameter expectedUIDValidity: when non-nil, refuses with
+    ///   `IMAPError.uidValidityChanged` if the source mailbox's `UIDVALIDITY`
+    ///   differs (see `storeFlags`).
+    public func copyMessage(uid: UID, from sourceMailbox: String, to destinationMailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
+        _ = try await selectMailbox(sourceMailbox, verifyingUIDValidity: expectedUIDValidity)
 
         _ = try await connection.sendCommand(
             .uid(.copy(sequence: .single(uid), mailbox: destinationMailbox))
@@ -126,10 +155,10 @@ extension IMAPClient {
     }
 
     /// Copy multiple messages to another mailbox
-    public func copyMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String) async throws {
+    public func copyMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         guard !uids.isEmpty else { return }
 
-        _ = try await selectMailbox(sourceMailbox)
+        _ = try await selectMailbox(sourceMailbox, verifyingUIDValidity: expectedUIDValidity)
 
         let sequence = IMAPCommand.SequenceSet.set(uids)
 
@@ -140,36 +169,42 @@ extension IMAPClient {
 
     /// Move a message to another mailbox (if server supports MOVE extension)
     /// Falls back to COPY + mark as deleted if MOVE is not supported
-    public func moveMessage(uid: UID, from sourceMailbox: String, to destinationMailbox: String) async throws {
+    ///
+    /// - Parameter expectedUIDValidity: when non-nil, refuses with
+    ///   `IMAPError.uidValidityChanged` if the source mailbox's `UIDVALIDITY`
+    ///   differs (see `storeFlags`).
+    public func moveMessage(uid: UID, from sourceMailbox: String, to destinationMailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         let capabilities = await connection.getCapabilities()
         if capabilities.contains("MOVE") {
-            _ = try await selectMailbox(sourceMailbox)
+            _ = try await selectMailbox(sourceMailbox, verifyingUIDValidity: expectedUIDValidity)
 
             _ = try await connection.sendCommand(
                 .uid(.move(sequence: .single(uid), mailbox: destinationMailbox))
             )
         } else {
-            // Fallback: COPY + mark as deleted
-            try await copyMessage(uid: uid, from: sourceMailbox, to: destinationMailbox)
+            // Fallback: COPY + mark as deleted. The validity check rides on the
+            // copy's SELECT, so a mismatch is caught before anything is sent.
+            try await copyMessage(uid: uid, from: sourceMailbox, to: destinationMailbox, expectedUIDValidity: expectedUIDValidity)
             try await markForDeletion(uid: uid, in: sourceMailbox)
         }
     }
 
     /// Move multiple messages to another mailbox
-    public func moveMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String) async throws {
+    public func moveMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         guard !uids.isEmpty else { return }
 
         let capabilities = await connection.getCapabilities()
         if capabilities.contains("MOVE") {
-            _ = try await selectMailbox(sourceMailbox)
+            _ = try await selectMailbox(sourceMailbox, verifyingUIDValidity: expectedUIDValidity)
 
             let sequence = IMAPCommand.SequenceSet.set(uids)
             _ = try await connection.sendCommand(
                 .uid(.move(sequence: sequence, mailbox: destinationMailbox))
             )
         } else {
-            // Fallback: COPY + mark as deleted
-            try await copyMessages(uids: uids, from: sourceMailbox, to: destinationMailbox)
+            // Fallback: COPY + mark as deleted. The validity check rides on the
+            // copy's SELECT, so a mismatch is caught before anything is sent.
+            try await copyMessages(uids: uids, from: sourceMailbox, to: destinationMailbox, expectedUIDValidity: expectedUIDValidity)
             for uid in uids {
                 try await markForDeletion(uid: uid, in: sourceMailbox)
             }
@@ -188,7 +223,7 @@ extension IMAPClient {
     /// Throws: `IMAPError.unsupportedCapability("UIDPLUS")` if the server does not support UIDPLUS. 
     /// Falling back to a whole-mailbox `EXPUNGE` would permanently delete every `\Deleted` message in the mailbox — not just the named UIDs. 
     /// Use ``expunge(mailbox:)`` if whole-mailbox expunge is actually what you want.
-    public func expunge(uids: [UID], in mailbox: String) async throws {
+    public func expunge(uids: [UID], in mailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         guard !uids.isEmpty else { return }
 
         // Guard before SELECT: a doomed call should not change the selected
@@ -198,7 +233,7 @@ extension IMAPClient {
             throw IMAPError.unsupportedCapability("UIDPLUS")
         }
 
-        _ = try await selectMailbox(mailbox)
+        _ = try await selectMailbox(mailbox, verifyingUIDValidity: expectedUIDValidity)
 
         let sequence = IMAPCommand.SequenceSet.set(uids)
         _ = try await connection.sendCommand(.uid(.expunge(sequence: sequence)))
