@@ -91,7 +91,7 @@ final class ModelTests: XCTestCase {
             cc: [],
             bcc: [],
             inReplyTo: nil,
-            messageID: "<12345@example.com>"
+            messageID: MessageID(value: "12345@example.com")
         )
         
         let summary = MessageSummary(
@@ -127,7 +127,7 @@ final class ModelTests: XCTestCase {
                 size: 100,
                 envelope: Envelope(date: date, subject: subject,
                                    from: [Address(name: "A", mailbox: "a", host: "x.com")]),
-                references: "<r1@x.com>"
+                references: [MessageID(value: "r1@x.com")]
             )
         }
 
@@ -149,20 +149,39 @@ final class ModelTests: XCTestCase {
         XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
     }
 
-    /// referenceIDs parses the raw References header into bare message-IDs,
-    /// stripping angle brackets and accepting space or comma separators;
-    /// nil/blank references yields an empty array.
-    func testReferenceIDsParsing() {
-        func summary(references: String?) -> MessageSummary {
-            MessageSummary(uid: 1, sequenceNumber: 1, internalDate: Date(), size: 0, references: references)
-        }
+    /// MessageID canonicalises to the bare form, so bracketed and bare framings
+    /// of the same identifier compare equal — the property that makes threading
+    /// comparisons bracket-safe.
+    func testMessageIDNormalisationAndEquality() {
+        XCTAssertEqual(MessageID(parsing: "<a@x.com>"), MessageID(value: "a@x.com"))
+        XCTAssertEqual(MessageID(parsing: "  <a@x.com> "), MessageID(parsing: "a@x.com"))
+        XCTAssertEqual(MessageID(parsing: "<a@x.com>")?.value, "a@x.com")
+        XCTAssertEqual(MessageID(value: "a@x.com").bracketed, "<a@x.com>")
+        XCTAssertNil(MessageID(parsing: "   "))
+        XCTAssertNil(MessageID(parsing: "<>"))
+    }
 
-        XCTAssertEqual(summary(references: "<a@x.com> <b@y.com>").referenceIDs, ["a@x.com", "b@y.com"])
-        XCTAssertEqual(summary(references: "<a@x.com>,<b@y.com>").referenceIDs, ["a@x.com", "b@y.com"])
-        XCTAssertEqual(summary(references: "  <only@x.com>  ").referenceIDs, ["only@x.com"])
-        XCTAssertEqual(summary(references: "bare@x.com").referenceIDs, ["bare@x.com"])
-        XCTAssertEqual(summary(references: nil).referenceIDs, [])
-        XCTAssertEqual(summary(references: "   ").referenceIDs, [])
+    /// MessageID.parseList tokenises a raw References header into ordered,
+    /// normalised identifiers, accepting space or comma separators and dropping
+    /// empty tokens.
+    func testMessageIDParseList() {
+        XCTAssertEqual(MessageID.parseList("<a@x.com> <b@y.com>"),
+                       [MessageID(value: "a@x.com"), MessageID(value: "b@y.com")])
+        XCTAssertEqual(MessageID.parseList("<a@x.com>,<b@y.com>"),
+                       [MessageID(value: "a@x.com"), MessageID(value: "b@y.com")])
+        XCTAssertEqual(MessageID.parseList("  <only@x.com>  "), [MessageID(value: "only@x.com")])
+        XCTAssertEqual(MessageID.parseList("bare@x.com"), [MessageID(value: "bare@x.com")])
+        XCTAssertEqual(MessageID.parseList("   "), [])
+    }
+
+    /// Threading is bracket-safe by construction: a reply's inReplyTo and the
+    /// parent's messageID compare equal regardless of how each was framed.
+    func testThreadingComparisonIsBracketSafe() {
+        let parentID = MessageID(parsing: "<parent@x.com>")!          // from ENVELOPE (bracketed)
+        let reply = Envelope(inReplyTo: MessageID(parsing: "parent@x.com"),  // however framed
+                             messageID: MessageID(value: "child@x.com"))
+        XCTAssertEqual(reply.inReplyTo, parentID)
+        XCTAssertTrue([parentID].contains(reply.inReplyTo!))
     }
 
     func testSequenceSetStringValue() {
