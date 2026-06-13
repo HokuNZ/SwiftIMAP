@@ -266,4 +266,87 @@ final class IMAPExpungeSafetyTests: XCTestCase {
 
         await client.disconnect()
     }
+
+    // MARK: - expectedUIDValidity guard (#48 / E2)
+
+    /// A write with a matching expectedUIDValidity proceeds normally.
+    func testWriteWithMatchingUIDValidityProceeds() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 12345]")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        try await client.storeFlags(uid: 7, in: "INBOX", flags: [.seen], action: .add, expectedUIDValidity: 12345)
+
+        XCTAssertTrue(mockServer.receivedCommands.contains { $0.uppercased().contains("UID STORE") },
+                      "A matching validity must let the store proceed")
+        await client.disconnect()
+    }
+
+    /// A mismatched expectedUIDValidity throws before the write command is sent
+    /// (the SELECT that reads validity is the only command that reaches the server).
+    func testStoreWithMismatchedUIDValidityThrowsBeforeSending() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 999]")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        do {
+            try await client.storeFlags(uids: [3, 5], in: "INBOX", flags: [.seen], action: .add, expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityChanged")
+        } catch IMAPError.uidValidityChanged(let expected, let actual) {
+            XCTAssertEqual(expected, 12345)
+            XCTAssertEqual(actual, 999)
+        }
+
+        let stores = mockServer.receivedCommands.filter { $0.uppercased().contains("STORE") }
+        XCTAssertTrue(stores.isEmpty, "No STORE may be sent on validity mismatch: \(stores)")
+        await client.disconnect()
+    }
+
+    /// The guard also blocks MOVE before any UID MOVE reaches the server.
+    func testMoveWithMismatchedUIDValidityThrowsBeforeSending() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN MOVE")
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 999]")
+        mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
+
+        do {
+            try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive", expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityChanged")
+        } catch IMAPError.uidValidityChanged(let expected, let actual) {
+            XCTAssertEqual(expected, 12345)
+            XCTAssertEqual(actual, 999)
+        }
+
+        XCTAssertFalse(mockServer.receivedCommands.contains { $0.uppercased().contains("UID MOVE") },
+                       "No UID MOVE may be sent on validity mismatch")
+        await client.disconnect()
+    }
+
+    /// And expunge: mismatch throws after the UIDPLUS guard, before UID EXPUNGE.
+    func testExpungeWithMismatchedUIDValidityThrowsBeforeSending() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN UIDPLUS")
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 999]")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        do {
+            try await client.expunge(uids: [7], in: "INBOX", expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityChanged")
+        } catch IMAPError.uidValidityChanged { /* expected */ }
+
+        XCTAssertFalse(mockServer.receivedCommands.contains { $0.uppercased().contains("UID EXPUNGE") },
+                       "No UID EXPUNGE may be sent on validity mismatch")
+        await client.disconnect()
+    }
+
+    /// The default (no expectedUIDValidity) is behaviour-identical: a write
+    /// proceeds regardless of the server's validity value.
+    func testWriteWithoutExpectedValidityIgnoresValidity() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 42]")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        try await client.storeFlags(uid: 7, in: "INBOX", flags: [.seen], action: .add)
+
+        XCTAssertTrue(mockServer.receivedCommands.contains { $0.uppercased().contains("UID STORE") })
+        await client.disconnect()
+    }
 }

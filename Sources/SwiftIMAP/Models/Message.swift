@@ -19,6 +19,26 @@ public struct MessageSummary: Sendable, Equatable {
     /// item (with or without `.PEEK`).
     public let references: String?
 
+    /// The `references` header parsed into bare message-IDs, angle brackets
+    /// stripped (e.g. `["a@x.com", "b@y.com"]` for `"<a@x.com> <b@y.com>"`).
+    /// Empty when `references` is `nil` or blank.
+    ///
+    /// Per RFC 5322 message-ids are whitespace-separated; some clients use
+    /// commas, so both are accepted. Use this for threading; use `references`
+    /// for the raw header value.
+    public var referenceIDs: [String] {
+        guard let references else { return [] }
+        return references
+            .split { " \t\r\n,".contains($0) }
+            .map { token in
+                var id = Substring(token)
+                if id.hasPrefix("<") { id = id.dropFirst() }
+                if id.hasSuffix(">") { id = id.dropLast() }
+                return String(id)
+            }
+            .filter { !$0.isEmpty }
+    }
+
     public init(
         uid: UID,
         sequenceNumber: MessageSequenceNumber,

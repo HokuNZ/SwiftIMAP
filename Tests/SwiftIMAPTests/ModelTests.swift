@@ -149,6 +149,22 @@ final class ModelTests: XCTestCase {
         XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
     }
 
+    /// #48 (E1): referenceIDs parses the raw References header into bare
+    /// message-IDs, stripping angle brackets and accepting space or comma
+    /// separators; nil/blank references yields an empty array.
+    func testReferenceIDsParsing() {
+        func summary(references: String?) -> MessageSummary {
+            MessageSummary(uid: 1, sequenceNumber: 1, internalDate: Date(), size: 0, references: references)
+        }
+
+        XCTAssertEqual(summary(references: "<a@x.com> <b@y.com>").referenceIDs, ["a@x.com", "b@y.com"])
+        XCTAssertEqual(summary(references: "<a@x.com>,<b@y.com>").referenceIDs, ["a@x.com", "b@y.com"])
+        XCTAssertEqual(summary(references: "  <only@x.com>  ").referenceIDs, ["only@x.com"])
+        XCTAssertEqual(summary(references: "bare@x.com").referenceIDs, ["bare@x.com"])
+        XCTAssertEqual(summary(references: nil).referenceIDs, [])
+        XCTAssertEqual(summary(references: "   ").referenceIDs, [])
+    }
+
     func testSequenceSetStringValue() {
         let single = IMAPCommand.SequenceSet.single(42)
         XCTAssertEqual(single.stringValue, "42")

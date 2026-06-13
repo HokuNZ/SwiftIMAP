@@ -12,6 +12,10 @@ public enum IMAPError: Error, LocalizedError {
     case invalidState(String)
     case unsupportedCapability(String)
     case invalidArgument(String)
+    /// A write guarded by `expectedUIDValidity` was refused because the
+    /// mailbox's `UIDVALIDITY` no longer matches: the UIDs the caller holds
+    /// refer to a different incarnation of the mailbox. No command was sent.
+    case uidValidityChanged(expected: UInt32, actual: UInt32)
 
     public var errorDescription: String? {
         switch self {
@@ -46,6 +50,8 @@ public enum IMAPError: Error, LocalizedError {
             return "Unsupported capability: \(capability)"
         case .invalidArgument(let message):
             return "Invalid argument: \(message)"
+        case let .uidValidityChanged(expected, actual):
+            return "Mailbox UIDVALIDITY changed: expected \(expected), got \(actual)"
         }
     }
 }
