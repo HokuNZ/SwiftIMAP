@@ -281,8 +281,8 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertEqual(decoded, ["Hello across actors"])
     }
 
-    /// #49: ParsedMimeMessage and MimePart are Equatable. Parsing identical
-    /// bytes twice yields equal values; differing bodies are unequal.
+    /// ParsedMimeMessage and MimePart are Equatable: parsing identical bytes
+    /// twice yields equal values; differing bodies are unequal.
     func testParsedMimeMessageEquatableConformance() throws {
         let raw = "Content-Type: text/plain; charset=utf-8\r\n\r\nbody one"
         let a = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
@@ -295,7 +295,7 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertNotEqual(a, c)
     }
 
-    /// #49: equality on the MimePart decode-failure branch (where rawBody is
+    /// Equality on the MimePart decode-failure branch (where rawBody is
     /// populated, not the decoded-success branch). Two parts that both fail to
     /// decode with the same raw body compare equal; a decoded part and a
     /// failed-decode part with the same bytes compare unequal (they differ in
