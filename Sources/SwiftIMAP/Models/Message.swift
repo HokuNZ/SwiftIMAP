@@ -19,7 +19,8 @@ public struct MessageSummary: Sendable, Equatable {
     /// `BODY[HEADER.FIELDS (REFERENCES)]` item (with or without `.PEEK`).
     ///
     /// These compare directly against any `Envelope.messageID` / `inReplyTo`
-    /// without bracket handling. To re-emit the header, join `.map(\.bracketed)`.
+    /// without bracket handling. To re-emit the header, use
+    /// `.map(\.bracketed).joined(separator: " ")`.
     public let references: [MessageID]
 
     public init(

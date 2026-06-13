@@ -11,7 +11,7 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
     }
 
     private func ids(_ values: String...) -> [MessageID] {
-        values.map { MessageID(value: $0) }
+        values.map { MessageID(parsing: $0)! }
     }
 
     func testParsesSingleReference() {

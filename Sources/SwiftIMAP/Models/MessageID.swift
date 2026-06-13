@@ -17,22 +17,18 @@ public struct MessageID: Hashable, Sendable {
     /// for equality and hashing.
     public let value: String
 
-    /// Wrap an already-bare identifier value. No parsing is performed; pass the
-    /// identity without angle brackets.
-    public init(value: String) {
-        self.value = value
-    }
-
     /// Parse a single header token into a `MessageID`.
     ///
-    /// Trims surrounding whitespace and removes one enclosing pair of angle
-    /// brackets if present. Returns `nil` for an empty or whitespace-only token,
-    /// so a malformed `References` list yields no spurious entries.
+    /// Trims surrounding whitespace and strips an enclosing angle bracket on
+    /// each side. Brackets are stripped independently, so a malformed
+    /// half-bracketed token (`<a@host` or `a@host>`) still canonicalises to the
+    /// bare identity — maximising correct threading matches. Returns `nil` for
+    /// an empty or whitespace-only token (and for a lone `<`, `>`, or `<>`), so
+    /// a malformed `References` list yields no spurious entries.
     public init?(parsing token: some StringProtocol) {
         var trimmed = Substring(token).trimmingCharacters(in: .whitespacesAndNewlines)[...]
-        if trimmed.hasPrefix("<"), trimmed.hasSuffix(">"), trimmed.count >= 2 {
-            trimmed = trimmed.dropFirst().dropLast()
-        }
+        if trimmed.hasPrefix("<") { trimmed = trimmed.dropFirst() }
+        if trimmed.hasSuffix(">") { trimmed = trimmed.dropLast() }
         guard !trimmed.isEmpty else { return nil }
         self.value = String(trimmed)
     }
