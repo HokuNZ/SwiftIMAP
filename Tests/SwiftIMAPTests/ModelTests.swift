@@ -113,8 +113,8 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(summary.envelope?.subject, "Test Subject")
     }
 
-    /// #49: the model snapshots are Equatable so consumers can diff and assert
-    /// against whole values. Covers MessageSummary, Envelope, BodyStructure.
+    /// The model snapshots are Equatable so consumers can diff and assert
+    /// against whole values: MessageSummary, Envelope, BodyStructure.
     func testModelEquatableConformance() {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         func makeSummary(subject: String) -> MessageSummary {
