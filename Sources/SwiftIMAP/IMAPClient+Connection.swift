@@ -113,8 +113,12 @@ extension IMAPClient {
         // once — we do not wait out the bound. Note a bounded-out LOGOUT is
         // resolved by that teardown, so it logs as `connectionClosed`, not
         // `timeout`.
-        let logoutBound = min(configuration.commandTimeout, 5)
-        let boundNanos = UInt64(max(0, logoutBound) * 1_000_000_000)
+        // Guard against a non-finite or non-positive commandTimeout: min/max
+        // propagate NaN and UInt64(NaN/∞) traps. A misconfigured timeout falls
+        // back to the 5s cap rather than crashing disconnect().
+        let configured = configuration.commandTimeout
+        let logoutBound = (configured.isFinite && configured > 0) ? Swift.min(configured, 5) : 5
+        let boundNanos = UInt64(logoutBound * 1_000_000_000)
 
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
