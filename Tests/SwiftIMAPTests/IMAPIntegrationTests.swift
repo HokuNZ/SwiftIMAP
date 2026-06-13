@@ -614,7 +614,7 @@ final class IMAPIntegrationTests: XCTestCase {
 
         let commands = mockServer.receivedCommands.map { $0.uppercased() }
         XCTAssertTrue(commands.contains { $0.contains("UID COPY") })
-        // The fallback deletion is now a single batched STORE for all UIDs (#54).
+        // The fallback deletion is a single batched STORE for all UIDs.
         let stores = commands.filter { $0.contains("UID STORE") }
         XCTAssertEqual(stores.count, 1)
         XCTAssertTrue(stores[0].contains("1,2"), "Batched \\Deleted STORE should carry both UIDs: \(stores[0])")
