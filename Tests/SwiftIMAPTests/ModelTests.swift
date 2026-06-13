@@ -134,9 +134,16 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(makeSummary(subject: "Same"), makeSummary(subject: "Same"))
         XCTAssertNotEqual(makeSummary(subject: "One"), makeSummary(subject: "Two"))
 
-        // Envelope and BodyStructure equality
-        let env = Envelope(date: date, subject: "S", to: [Address(name: nil, mailbox: "t", host: "x.com")])
-        XCTAssertEqual(env, env)
+        // Envelope: two independently-built instances with equal inputs compare
+        // equal (incl. the derived *Entries), and differ when a field differs.
+        func makeEnvelope(subject: String) -> Envelope {
+            Envelope(date: date, subject: subject,
+                     from: [Address(name: "A", mailbox: "a", host: "x.com")],
+                     to: [Address(name: nil, mailbox: "t", host: "x.com")])
+        }
+        XCTAssertEqual(makeEnvelope(subject: "S"), makeEnvelope(subject: "S"))
+        XCTAssertNotEqual(makeEnvelope(subject: "S"), makeEnvelope(subject: "T"))
+
         let structure = BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10)
         XCTAssertEqual(structure, BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10))
         XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
