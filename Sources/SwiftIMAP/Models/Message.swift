@@ -26,6 +26,10 @@ public struct MessageSummary: Sendable, Equatable {
     /// Per RFC 5322 message-ids are whitespace-separated; some clients use
     /// commas, so both are accepted. Use this for threading; use `references`
     /// for the raw header value.
+    ///
+    /// - Note: a comma inside a quoted-string local part (e.g. `<"a,b"@host>`,
+    ///   legal but vanishingly rare) would be split. The threading use case
+    ///   tolerates this; read `references` if you need the exact tokens.
     public var referenceIDs: [String] {
         guard let references else { return [] }
         return references

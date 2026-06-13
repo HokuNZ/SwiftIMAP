@@ -349,4 +349,47 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         XCTAssertTrue(mockServer.receivedCommands.contains { $0.uppercased().contains("UID STORE") })
         await client.disconnect()
     }
+
+    /// When the SELECT response carries no UIDVALIDITY, an expectedUIDValidity
+    /// guard cannot be honoured: the write is refused with uidValidityUnavailable
+    /// rather than silently passing a comparison against the parser's 0 sentinel.
+    func testGuardThrowsWhenServerOmitsUIDValidity() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        // SELECT completes but reports no UIDVALIDITY code.
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        do {
+            try await client.storeFlags(uid: 7, in: "INBOX", flags: [.seen], action: .add, expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityUnavailable when the server reports no UIDVALIDITY")
+        } catch IMAPError.uidValidityUnavailable(let expected) {
+            XCTAssertEqual(expected, 12345)
+        }
+
+        let stores = mockServer.receivedCommands.filter { $0.uppercased().contains("STORE") }
+        XCTAssertTrue(stores.isEmpty, "No STORE may be sent when validity cannot be verified: \(stores)")
+        await client.disconnect()
+    }
+
+    /// The MOVE COPY-fallback path (server without MOVE) also honours the guard:
+    /// a mismatch throws on the copy's SELECT before any COPY or STORE is sent.
+    func testMoveCopyFallbackHonoursUIDValidityGuard() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")  // no MOVE
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 999]")
+        mockServer.setResponse(for: "UID COPY", response: "OK Copy completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        do {
+            try await client.moveMessages(uids: [4], from: "INBOX", to: "Archive", expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityChanged on the COPY-fallback path")
+        } catch let IMAPError.uidValidityChanged(expected, actual) {
+            XCTAssertEqual(expected, 12345)
+            XCTAssertEqual(actual, 999)
+        }
+
+        let commands = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertFalse(commands.contains { $0.contains("UID COPY") }, "No COPY on validity mismatch")
+        XCTAssertFalse(commands.contains { $0.contains("UID STORE") }, "No \\Deleted STORE on validity mismatch")
+        await client.disconnect()
+    }
 }

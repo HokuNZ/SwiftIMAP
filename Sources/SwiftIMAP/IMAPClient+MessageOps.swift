@@ -11,11 +11,22 @@ extension IMAPClient {
     /// response carries the validity, so there is no window (unlike a separate
     /// `STATUS` call) in which validity could change between the check and the
     /// write.
+    ///
+    /// If the `SELECT` response carries no `UIDVALIDITY` (the parser reports it
+    /// as `0`, which RFC 3501 forbids as a real value), the validity cannot be
+    /// verified and the write is refused with `IMAPError.uidValidityUnavailable`
+    /// rather than silently comparing against the `0` sentinel — a verify the
+    /// caller asked for must not pass when nothing was actually verified.
     @discardableResult
     private func selectMailbox(_ mailbox: String, verifyingUIDValidity expectedUIDValidity: UInt32?) async throws -> MailboxStatus {
         let status = try await selectMailbox(mailbox)
-        if let expectedUIDValidity, expectedUIDValidity != status.uidValidity {
-            throw IMAPError.uidValidityChanged(expected: expectedUIDValidity, actual: status.uidValidity)
+        if let expectedUIDValidity {
+            guard status.uidValidity != 0 else {
+                throw IMAPError.uidValidityUnavailable(expected: expectedUIDValidity)
+            }
+            if expectedUIDValidity != status.uidValidity {
+                throw IMAPError.uidValidityChanged(expected: expectedUIDValidity, actual: status.uidValidity)
+            }
         }
         return status
     }
