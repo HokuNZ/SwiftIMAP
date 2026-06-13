@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `IMAPServerResponse` value type carrying the server's `status` (`NO`/`BAD`/`BYE`), parsed `code`, `text`, and the argument-free `commandName`, plus a reconstructed `line` for logging (e.g. `NO [TRYCREATE] Mailbox does not exist`) (#27). Surfaced on `commandFailed` and `connectionClosed` so callers (e.g. MailTriage #226) can log a faithful server response line and distinguish causes. Includes semantic accessors: `isMailboxNotFound`, `isOverQuota`, `isPermissionDenied`, `isAuthenticationFailure`, and `codeName`.
 - `IMAPCommand.Command.label` / `IMAPCommand.UIDCommand.label`: the argument-free IMAP verb, safe to log.
+- `MessageSummary`, `Envelope`, `BodyStructure`, `ParsedMimeMessage`, and `MimePart` now conform to `Equatable` (#49), so consumers can diff and assert against whole model values in tests. Additive; identity/collection types (`Mailbox`, `Address`) remain `Hashable` as before.
 
 ### Changed
 - **Breaking.** `IMAPError` reshaped for richer, leak-free diagnostics (#27):

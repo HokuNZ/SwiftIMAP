@@ -3,7 +3,7 @@ import Foundation
 public typealias UID = UInt32
 public typealias MessageSequenceNumber = UInt32
 
-public struct MessageSummary: Sendable {
+public struct MessageSummary: Sendable, Equatable {
     public let uid: UID
     public let sequenceNumber: MessageSequenceNumber
     /// The standard RFC 3501 system flags (see `Flag`).
@@ -77,7 +77,7 @@ public enum AddressListEntry: Sendable, Hashable {
     case group(name: String, members: [Address])
 }
 
-public struct Envelope: Sendable {
+public struct Envelope: Sendable, Equatable {
     public let date: Date?
     public let subject: String?
     public let from: [Address]
@@ -132,7 +132,7 @@ public struct Envelope: Sendable {
     }
 }
 
-public struct BodyStructure: Sendable {
+public struct BodyStructure: Sendable, Equatable {
     public let type: String
     public let subtype: String
     public let parameters: [String: String]

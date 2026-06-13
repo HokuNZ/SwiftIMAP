@@ -112,7 +112,36 @@ final class ModelTests: XCTestCase {
         XCTAssertNotNil(summary.envelope)
         XCTAssertEqual(summary.envelope?.subject, "Test Subject")
     }
-    
+
+    /// #49: the model snapshots are Equatable so consumers can diff and assert
+    /// against whole values. Covers MessageSummary, Envelope, BodyStructure.
+    func testModelEquatableConformance() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        func makeSummary(subject: String) -> MessageSummary {
+            MessageSummary(
+                uid: 1,
+                sequenceNumber: 1,
+                flags: [.seen],
+                keywords: ["@Triaged"],
+                internalDate: date,
+                size: 100,
+                envelope: Envelope(date: date, subject: subject,
+                                   from: [Address(name: "A", mailbox: "a", host: "x.com")]),
+                references: "<r1@x.com>"
+            )
+        }
+
+        XCTAssertEqual(makeSummary(subject: "Same"), makeSummary(subject: "Same"))
+        XCTAssertNotEqual(makeSummary(subject: "One"), makeSummary(subject: "Two"))
+
+        // Envelope and BodyStructure equality
+        let env = Envelope(date: date, subject: "S", to: [Address(name: nil, mailbox: "t", host: "x.com")])
+        XCTAssertEqual(env, env)
+        let structure = BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10)
+        XCTAssertEqual(structure, BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10))
+        XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
+    }
+
     func testSequenceSetStringValue() {
         let single = IMAPCommand.SequenceSet.single(42)
         XCTAssertEqual(single.stringValue, "42")
