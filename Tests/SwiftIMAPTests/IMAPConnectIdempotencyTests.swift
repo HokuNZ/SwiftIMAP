@@ -2,7 +2,7 @@ import XCTest
 @testable import SwiftIMAP
 import NIO
 
-/// Tests for the idempotent `connect()` contract (issue #37): no-op when
+/// Tests for the idempotent `connect()` contract: no-op when
 /// healthy, reconnect when stale, and coalescing of concurrent calls.
 final class IMAPConnectIdempotencyTests: XCTestCase {
     private var eventLoopGroup: MultiThreadedEventLoopGroup!

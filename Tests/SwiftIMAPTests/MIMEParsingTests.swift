@@ -252,7 +252,7 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertThrowsError(try MessageSummary.parseMimeContent(from: invalid))
     }
 
-    /// The decodedText raw fallback (#38): when the transfer encoding cannot be
+    /// The decodedText raw fallback: when the transfer encoding cannot be
     /// decoded, decodedText returns the raw body text rather than nil, and
     /// decodedData is nil. Pins the only reason rawBody is retained.
     func testUndecodableTransferEncodingFallsBackToRawText() throws {
@@ -265,7 +265,7 @@ final class MIMEParsingTests: XCTestCase {
                        "decodedText must fall back to the raw body when decoding fails")
     }
 
-    /// Compile-time guarantee for #38: ParsedMimeMessage and MimePart are
+    /// Compile-time guarantee that ParsedMimeMessage and MimePart are
     /// Sendable, so parsed results can cross actor/task boundaries. This test
     /// fails to compile (under strict concurrency it errors) if the conformance
     /// is removed or invalidated by a non-Sendable stored property.

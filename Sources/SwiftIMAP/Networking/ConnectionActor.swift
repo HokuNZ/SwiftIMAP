@@ -454,7 +454,7 @@ actor ConnectionActor {
             // as opposed to a parse error on a live connection), reset the actor
             // state so a later connect() can re-establish. Without this the state
             // stays .authenticated/.selected and connect() throws invalidState,
-            // making reconnect-after-drop impossible (#35 / A4).
+            // making reconnect-after-drop impossible.
             if channel?.isActive != true {
                 connectionState = .disconnected
                 await cleanup()

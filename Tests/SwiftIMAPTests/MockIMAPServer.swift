@@ -8,8 +8,8 @@ import NIOConcurrencyHelpers
 /// Mock IMAP server used by the in-process integration tests. State touched by
 /// both the test thread (set/asserted) and the NIO event loop (handler
 /// callbacks) lives in the `_`-prefixed properties below, serialised via
-/// `lock`. `channel` is only touched from the test task (start/shutdown). See
-/// #21 for the failure mode this fixes.
+/// `lock`. `channel` is only touched from the test task (start/shutdown). This
+/// serialisation prevents a buffer drain racing a live dispatch.
 class MockIMAPServer {
     private let lock = NIOLock()
     private let eventLoopGroup: EventLoopGroup

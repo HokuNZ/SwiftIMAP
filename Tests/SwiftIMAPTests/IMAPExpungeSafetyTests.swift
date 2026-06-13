@@ -3,7 +3,7 @@ import XCTest
 import NIO
 
 /// Tests for the expunge/delete footgun fixes and the cached-capability gating
-/// (issue #36): a targeted expunge must never silently widen to a whole-mailbox
+/// a targeted expunge must never silently widen to a whole-mailbox
 /// `EXPUNGE`, deletes batch their STORE, and capability-gated operations read
 /// the cached capability set instead of issuing CAPABILITY per call.
 final class IMAPExpungeSafetyTests: XCTestCase {

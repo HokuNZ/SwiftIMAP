@@ -39,7 +39,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         _ = try await client.selectMailbox("INBOX")
     }
 
-    /// connect() is idempotent against a real server (#37): a second call on a
+    /// connect() is idempotent against a real server: a second call on a
     /// healthy client is a no-op and the session stays fully usable.
     func testConnectIsIdempotentAgainstRealServer() async throws {
         let client = try await connectClient()

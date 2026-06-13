@@ -76,7 +76,7 @@ final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     // read — and is then cleared (under the same lock, without re-entry) so the
     // channel reverts to buffering. The greeting handler uses this so any response
     // arriving between the greeting and the persistent handler being installed is
-    // buffered rather than dropped by a stale greeting closure (#26).
+    // buffered rather than dropped by a stale greeting closure.
     func setResponseHandler(_ handler: ((Result<[IMAPResponse], Error>) -> Void)?, oneShot: Bool = false) {
         lock.withLock {
             _responseHandler = handler

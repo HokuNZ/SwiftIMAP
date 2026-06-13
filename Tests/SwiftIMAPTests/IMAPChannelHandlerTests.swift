@@ -84,7 +84,7 @@ final class IMAPChannelHandlerTests: XCTestCase {
 
     /// A one-shot handler receives the first live batch and is then cleared, so
     /// subsequent responses buffer for the next handler rather than hitting the
-    /// stale one-shot closure (#26).
+    /// stale one-shot closure.
     func testOneShotHandlerConsumesFirstBatchThenBuffers() throws {
         let handler = makeHandler()
         let channel = EmbeddedChannel(handler: handler)
@@ -213,11 +213,10 @@ final class IMAPChannelHandlerTests: XCTestCase {
                       "A terminal transport error must be classified as reconnectable")
     }
 
-    /// Regression for #35 / A4: an abrupt connection drop (channelInactive with no
-    /// server response) must surface as `connectionClosed(nil)`, which the retry
-    /// layer classifies as reconnectable. Previously it surfaced as `.disconnected`,
-    /// which was neither retryable nor reconnectable, so a dropped connection
-    /// mid-session failed permanently.
+    /// An abrupt connection drop (channelInactive with no server response) must
+    /// surface as `connectionClosed(nil)`, which the retry layer classifies as
+    /// reconnectable — `.disconnected` would be neither retryable nor
+    /// reconnectable, so a dropped connection mid-session would fail permanently.
     func testAbruptDropSurfacesAsReconnectableConnectionClosed() throws {
         let handler = makeHandler()
         let channel = EmbeddedChannel(handler: handler)

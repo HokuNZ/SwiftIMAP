@@ -2,9 +2,9 @@ import XCTest
 @testable import SwiftIMAP
 import NIO
 
-/// Integration tests for the operational context carried by `IMAPError`
-/// (issue #27): server response lines, and the guarantee that credentials never
-/// leak into error output.
+/// Integration tests for the operational context carried by `IMAPError`:
+/// server response lines, and the guarantee that credentials never leak into
+/// error output.
 final class IMAPErrorContextTests: XCTestCase {
     private var eventLoopGroup: MultiThreadedEventLoopGroup!
     private var mockServer: MockIMAPServer!
@@ -30,9 +30,9 @@ final class IMAPErrorContextTests: XCTestCase {
         try await super.tearDown()
     }
 
-    /// Regression: a rejected LOGIN must never leak the username or password into
-    /// the thrown error or its description (issue #27). The command label replaces
-    /// String(describing:), which used to embed the credentials.
+    /// A rejected LOGIN must never leak the username or password into the thrown
+    /// error or its description: the command label is argument-free, so neither
+    /// the error nor its `errorDescription` carries the credentials.
     func testRejectedLoginDoesNotLeakCredentials() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "NO [AUTHENTICATIONFAILED] Invalid credentials")
@@ -63,7 +63,7 @@ final class IMAPErrorContextTests: XCTestCase {
                            "Password leaked into reflected error: \(reflected)")
 
             // A server-rejected LOGIN surfaces as authenticationFailed (not the
-            // generic commandFailed), carrying the server response (#35 / A5).
+            // generic commandFailed), carrying the server response.
             guard case .authenticationFailed(let message, let response) = error else {
                 XCTFail("Expected authenticationFailed, got: \(error)")
                 return
@@ -83,7 +83,7 @@ final class IMAPErrorContextTests: XCTestCase {
     }
 
     /// A server-rejected AUTHENTICATE (here SASL PLAIN with SASL-IR) also surfaces
-    /// as authenticationFailed carrying the server response (#35 / A5).
+    /// as authenticationFailed carrying the server response.
     func testRejectedAuthenticateSurfacesAsAuthenticationFailed() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN")
         mockServer.setAuthenticateResponse("NO [AUTHENTICATIONFAILED] Authentication rejected")
@@ -113,7 +113,7 @@ final class IMAPErrorContextTests: XCTestCase {
     }
 
     /// A MOVE to a missing destination surfaces the server's rejection with the
-    /// status, code, and operation intact — the core requirement from MailTriage #226.
+    /// status, code, and operation intact, for consumer logging.
     func testRejectedMoveExposesServerResponse() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 MOVE")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -148,10 +148,10 @@ final class IMAPErrorContextTests: XCTestCase {
         await client.disconnect()
     }
 
-    /// End-to-end regression for #35 / A4: an abrupt connection drop (no BYE)
-    /// mid-way through a wrapped operation reconnects and retries transparently.
-    /// Previously the drop surfaced as `disconnected` (not reconnectable) and the
-    /// actor state was never reset, so the reconnect itself threw `invalidState`.
+    /// An abrupt connection drop (no BYE) mid-way through a wrapped operation
+    /// reconnects and retries transparently: the drop must surface as a
+    /// reconnectable error and the actor state must reset so the reconnect does
+    /// not throw `invalidState`.
     func testWrappedOperationReconnectsAndRetriesAfterAbruptDrop() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -209,7 +209,7 @@ final class IMAPErrorContextTests: XCTestCase {
 
     /// An unsolicited mid-session `* BYE` followed by the server dropping the
     /// connection surfaces the BYE's reason on the in-flight command, rather than a
-    /// bare `disconnected` (#26 follow-up).
+    /// bare `disconnected`.
     func testMidSessionByeSurfacesReasonOnPendingCommand() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")

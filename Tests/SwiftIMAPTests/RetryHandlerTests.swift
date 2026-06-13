@@ -63,8 +63,7 @@ final class RetryHandlerTests: XCTestCase {
     }
 
     func testExecuteRetriesOnConnectionFailed() async throws {
-        // connect() failures surface as connectionFailed; these must be retryable
-        // (previously they fell through to non-retryable, making retries a no-op).
+        // connect() failures surface as connectionFailed; these must be retryable.
         let handler = makeHandler(maxAttempts: 2, retryableErrors: [.connectionLost])
         let attempts = Counter()
 
@@ -373,7 +372,7 @@ final class RetryHandlerTests: XCTestCase {
     func testRequiresReconnectionFlagsConnectionErrors() {
         // connectionClosed(nil) is what an abrupt TCP drop produces (see
         // IMAPChannelHandler.channelInactive); it must be reconnectable or a
-        // dropped connection mid-session fails permanently (#35 / A4).
+        // dropped connection mid-session fails permanently.
         XCTAssertTrue(IMAPError.connectionClosed(nil).requiresReconnection)
         XCTAssertTrue(IMAPError.connectionFailed("refused", underlying: nil).requiresReconnection)
         XCTAssertFalse(IMAPError.timeout(command: nil).requiresReconnection)
