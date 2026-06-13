@@ -2,9 +2,9 @@ import XCTest
 @testable import SwiftIMAP
 import NIO
 
-/// Tests for read-path resilience (#46): fetchMessageBody reconnects and
-/// retries on an abrupt drop like fetchMessage, and disconnect() bounds its
-/// LOGOUT so a silent server cannot make it hang for the full commandTimeout.
+/// Tests for read-path resilience: fetchMessageBody reconnects and retries on
+/// an abrupt drop like fetchMessage, and disconnect() bounds its LOGOUT so a
+/// silent server cannot make it hang for the full commandTimeout.
 final class IMAPReadResilienceTests: XCTestCase {
     private var eventLoopGroup: MultiThreadedEventLoopGroup!
     private var mockServer: MockIMAPServer!
@@ -31,8 +31,7 @@ final class IMAPReadResilienceTests: XCTestCase {
     }
 
     /// fetchMessageBody reconnects and retries transparently after the
-    /// connection drops mid-fetch — the read-path equivalent of the
-    /// listMessageUIDs reconnect regression (#35 / A4, #46 / C2-read).
+    /// connection drops mid-fetch, like fetchMessage.
     func testFetchMessageBodyReconnectsAndRetriesAfterDrop() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -66,9 +65,9 @@ final class IMAPReadResilienceTests: XCTestCase {
     }
 
     /// disconnect() returns promptly when the server accepts LOGOUT but never
-    /// answers it, rather than waiting out the full commandTimeout (#46 / C3).
-    /// The bound is min(commandTimeout, 5s); with the default 60s timeout a
-    /// regression that dropped the bound would hang ~60s.
+    /// answers it, rather than waiting out the full commandTimeout. The bound is
+    /// min(commandTimeout, 5s); with the default 60s timeout a regression that
+    /// dropped the bound would hang ~60s.
     func testDisconnectBoundsUnansweredLogout() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
