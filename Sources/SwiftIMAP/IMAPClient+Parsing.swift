@@ -11,7 +11,7 @@ extension IMAPClient {
         var internalDate: Date?
         var size: UInt32?
         var envelope: Envelope?
-        var references: String?
+        var references: [MessageID] = []
 
         for attribute in attributes {
             switch attribute {
@@ -61,17 +61,18 @@ extension IMAPClient {
         )
     }
 
-    /// Parse the References header value from raw header data.
-    /// The data format is: "References: <id1> <id2> ...\r\n", optionally RFC 5322
-    /// folded across multiple lines with CRLF followed by WSP continuations.
-    func parseReferencesHeader(from data: Data) -> String? {
+    /// Parse the References header value from raw header data into normalised
+    /// identifiers (oldest first). The data format is
+    /// "References: <id1> <id2> ...\r\n", optionally RFC 5322 folded across
+    /// multiple lines with CRLF followed by WSP continuations.
+    func parseReferencesHeader(from data: Data) -> [MessageID] {
         let headerText: String
         if let utf8 = String(data: data, encoding: .utf8) {
             headerText = utf8
         } else if let latin1 = String(data: data, encoding: .isoLatin1) {
             headerText = latin1
         } else {
-            return nil
+            return []
         }
 
         // RFC 5322 header unfolding: CRLF followed by WSP is a line continuation.
@@ -83,11 +84,10 @@ extension IMAPClient {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.lowercased().hasPrefix("references:") {
                 let value = String(trimmed.dropFirst("references:".count))
-                    .trimmingCharacters(in: .whitespaces)
-                return value.isEmpty ? nil : value
+                return MessageID.parseList(value)
             }
         }
-        return nil
+        return []
     }
 
     func parseEnvelope(_ data: IMAPResponse.EnvelopeData) -> Envelope {
@@ -119,8 +119,8 @@ extension IMAPClient {
             ccEntries: ccList.entries,
             bcc: bccList.flat,
             bccEntries: bccList.entries,
-            inReplyTo: data.inReplyTo,
-            messageID: data.messageID
+            inReplyTo: data.inReplyTo.flatMap(MessageID.init(parsing:)),
+            messageID: data.messageID.flatMap(MessageID.init(parsing:))
         )
     }
 

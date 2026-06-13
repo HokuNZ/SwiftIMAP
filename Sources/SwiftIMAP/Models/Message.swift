@@ -14,34 +14,13 @@ public struct MessageSummary: Sendable, Equatable {
     public let internalDate: Date
     public let size: UInt32
     public let envelope: Envelope?
-    /// The References header, containing message IDs for threading.
-    /// Populated when the fetch includes a `BODY[HEADER.FIELDS (REFERENCES)]`
-    /// item (with or without `.PEEK`).
-    public let references: String?
-
-    /// The `references` header parsed into bare message-IDs, angle brackets
-    /// stripped (e.g. `["a@x.com", "b@y.com"]` for `"<a@x.com> <b@y.com>"`).
-    /// Empty when `references` is `nil` or blank.
+    /// The `References` header parsed into normalised identifiers, oldest first
+    /// (the threading ancestry chain). Empty unless the fetch includes a
+    /// `BODY[HEADER.FIELDS (REFERENCES)]` item (with or without `.PEEK`).
     ///
-    /// Per RFC 5322 message-ids are whitespace-separated; some clients use
-    /// commas, so both are accepted. Use this for threading; use `references`
-    /// for the raw header value.
-    ///
-    /// - Note: a comma inside a quoted-string local part (e.g. `<"a,b"@host>`,
-    ///   legal but vanishingly rare) would be split. The threading use case
-    ///   tolerates this; read `references` if you need the exact tokens.
-    public var referenceIDs: [String] {
-        guard let references else { return [] }
-        return references
-            .split { " \t\r\n,".contains($0) }
-            .map { token in
-                var id = Substring(token)
-                if id.hasPrefix("<") { id = id.dropFirst() }
-                if id.hasSuffix(">") { id = id.dropLast() }
-                return String(id)
-            }
-            .filter { !$0.isEmpty }
-    }
+    /// These compare directly against any `Envelope.messageID` / `inReplyTo`
+    /// without bracket handling. To re-emit the header, join `.map(\.bracketed)`.
+    public let references: [MessageID]
 
     public init(
         uid: UID,
@@ -51,7 +30,7 @@ public struct MessageSummary: Sendable, Equatable {
         internalDate: Date,
         size: UInt32,
         envelope: Envelope? = nil,
-        references: String? = nil
+        references: [MessageID] = []
     ) {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
@@ -116,8 +95,10 @@ public struct Envelope: Sendable, Equatable {
     public let ccEntries: [AddressListEntry]
     public let bcc: [Address]
     public let bccEntries: [AddressListEntry]
-    public let inReplyTo: String?
-    public let messageID: String?
+    /// The parent message this is a reply to (`In-Reply-To`), normalised.
+    public let inReplyTo: MessageID?
+    /// This message's own identifier (`Message-ID`), normalised.
+    public let messageID: MessageID?
     
     public init(
         date: Date? = nil,
@@ -134,8 +115,8 @@ public struct Envelope: Sendable, Equatable {
         ccEntries: [AddressListEntry]? = nil,
         bcc: [Address] = [],
         bccEntries: [AddressListEntry]? = nil,
-        inReplyTo: String? = nil,
-        messageID: String? = nil
+        inReplyTo: MessageID? = nil,
+        messageID: MessageID? = nil
     ) {
         self.date = date
         self.subject = subject
