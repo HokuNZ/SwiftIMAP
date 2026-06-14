@@ -223,21 +223,22 @@ final class RawRFC822ParsingTests: XCTestCase {
         }
     }
 
-    /// The envelope survives a body that is not valid UTF-8: header parsing is
-    /// decoupled from the body, with an ISO-8859-1 fallback for decoding.
+    /// A non-UTF-8 byte in the body does not corrupt the headers: only the header
+    /// block is decoded, so a valid UTF-8 header (here a `Subject` with a
+    /// multi-byte character) round-trips even when the body is not valid UTF-8.
     func testParseRFC822RecoversEnvelopeFromNonUTF8Body() throws {
-        var bytes = Data("""
-        From: Alice <alice@example.com>
-        Subject: Plain subject
-        Date: Tue, 05 Oct 2021 11:03:08 -0400
-
-        """.replacingOccurrences(of: "\n", with: "\r\n").utf8)
-        bytes.append(0xFF)  // invalid as UTF-8, forces the Latin-1 fallback
-        bytes.append(contentsOf: Data("\r\nbody".utf8))
+        // Headers (valid UTF-8, with a multi-byte Subject) then a blank line, then
+        // a body containing a byte that is not valid UTF-8.
+        let headers = "From: Alice <alice@example.com>\r\n" +
+                      "Subject: ✓ Done\r\n" +
+                      "Date: Tue, 05 Oct 2021 11:03:08 -0400\r\n\r\n"
+        var bytes = Data(headers.utf8)
+        bytes.append(0xFF)  // invalid UTF-8 in the body — must not affect header decoding
+        bytes.append(contentsOf: Data(" rest of body".utf8))
 
         let summary = try MessageSummary.parse(rfc822: bytes)
         XCTAssertEqual(summary.envelope?.from, [Address(name: "Alice", mailbox: "alice", host: "example.com")])
-        XCTAssertEqual(summary.envelope?.subject, "Plain subject")
+        XCTAssertEqual(summary.envelope?.subject, "✓ Done", "UTF-8 header must decode as UTF-8 despite the non-UTF-8 body")
         XCTAssertEqual(summary.envelope?.date, Date(timeIntervalSince1970: 1_633_446_188))
     }
 
