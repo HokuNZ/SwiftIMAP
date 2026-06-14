@@ -248,7 +248,7 @@ final class MIMEParsingTests: XCTestCase {
     }
 
     /// A body that is not valid UTF-8 is decoded via the ISO-8859-1 fallback
-    /// rather than throwing at the decode step (#70).
+    /// rather than throwing at the decode step.
     func testParseMimeContentDecodesNonUTF8BodyViaLatin1() throws {
         var bytes = Data("Content-Type: text/plain; charset=iso-8859-1\r\n\r\n".utf8)
         bytes.append(0xA3)  // £ in ISO-8859-1, invalid as a standalone UTF-8 byte

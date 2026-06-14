@@ -61,7 +61,11 @@ enum RFC2822 {
             ?? String(data: data, encoding: .isoLatin1)
             ?? ""
 
-        var normalised = text.replacingOccurrences(of: "\r\n", with: "\n")
+        // Normalise all three historic line endings to "\n": CRLF first, then any
+        // bare CR (old-Mac, or a malformed server) so headers still split.
+        var normalised = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
 
         if normalised.hasPrefix("From ") {
             if let newline = normalised.firstIndex(of: "\n") {
