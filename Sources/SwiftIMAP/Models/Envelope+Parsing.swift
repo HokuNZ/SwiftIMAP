@@ -90,7 +90,7 @@ enum RFC2822 {
     /// `local@domain`) into an `Address`. Returns `nil` if there is no
     /// `local@domain` with non-empty local and domain parts.
     private static func parseAddress(_ spec: String) -> Address? {
-        let trimmed = spec.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = stripGroupSyntax(spec.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !trimmed.isEmpty else { return nil }
 
         var name: String?
@@ -115,27 +115,89 @@ enum RFC2822 {
     }
 
     /// Strip surrounding double quotes and RFC 2047 decode a display name.
+    /// A quoted name has its RFC 2822 quoted-pairs (`\"`, `\\`) unescaped.
     /// Returns `nil` for an empty result so `Address.name` stays absent rather
     /// than an empty string.
     private static func cleanDisplayName(_ raw: String) -> String? {
         var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.count >= 2, name.hasPrefix("\""), name.hasSuffix("\"") {
-            name = String(name.dropFirst().dropLast())
+            name = unescapeQuotedPairs(String(name.dropFirst().dropLast()))
         }
         name = RFC2047.decode(name).trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
     }
 
+    /// Drop an RFC 2822 address-group wrapper from a single token: a leading
+    /// `Group Name:` label (top-level colon before any address token) and a
+    /// trailing `;`. Group members are thereby flattened to bare addresses; a
+    /// label-only token (`Undisclosed recipients:`) collapses to empty and is
+    /// dropped by the caller.
+    private static func stripGroupSyntax(_ token: String) -> String {
+        var result = token.hasSuffix(";") ? String(token.dropLast()) : token
+
+        // A group label ends at a top-level colon that precedes any address
+        // token. Stop at the first `<` or `@` — past there we are inside an
+        // address, where a colon is not a group delimiter.
+        var inQuote = false
+        var labelEnd: String.Index?
+        var index = result.startIndex
+        while index < result.endIndex {
+            let character = result[index]
+            if character == "\"" {
+                inQuote.toggle()
+            } else if !inQuote {
+                if character == "<" || character == "@" { break }
+                if character == ":" { labelEnd = index; break }
+            }
+            index = result.index(after: index)
+        }
+        if let labelEnd {
+            result = String(result[result.index(after: labelEnd)...])
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Resolve RFC 2822 quoted-pairs (`\x` -> `x`) inside an already-unwrapped
+    /// quoted string, so an escaped quote or backslash in a display name reads
+    /// literally.
+    private static func unescapeQuotedPairs(_ value: String) -> String {
+        var result = ""
+        var escaped = false
+        for character in value {
+            if escaped {
+                result.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else {
+                result.append(character)
+            }
+        }
+        if escaped { result.append("\\") }
+        return result
+    }
+
     /// Split an address list on commas that are at the top level: not inside a
-    /// quoted string and not inside angle brackets. Empty pieces are dropped.
+    /// quoted string and not inside angle brackets. An escaped quote (`\"`)
+    /// inside a quoted string does not end the quote. Empty pieces are dropped.
     private static func splitTopLevel(_ value: String) -> [String] {
         var parts: [String] = []
         var current = ""
         var inQuote = false
+        var escaped = false
         var angleDepth = 0
 
         for character in value {
+            if escaped {
+                current.append(character)
+                escaped = false
+                continue
+            }
             switch character {
+            case "\\" where inQuote:
+                current.append(character)
+                escaped = true
             case "\"":
                 inQuote.toggle()
                 current.append(character)

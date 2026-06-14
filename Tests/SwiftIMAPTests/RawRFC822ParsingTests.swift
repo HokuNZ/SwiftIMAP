@@ -76,13 +76,33 @@ final class RawRFC822ParsingTests: XCTestCase {
         XCTAssertEqual(RFC2822.parseAddressList(nil), [])
     }
 
+    /// An escaped quote inside a quoted display name does not end the quote (so
+    /// the comma inside it is not a separator), and is unescaped in the result.
+    func testAddressListHandlesEscapedQuotesInName() {
+        let addresses = RFC2822.parseAddressList("\"Smith, \\\"Bob\\\"\" <bob@example.com>")
+        XCTAssertEqual(addresses, [Address(name: "Smith, \"Bob\"", mailbox: "bob", host: "example.com")])
+    }
+
+    /// An RFC 2822 address group is flattened to its member addresses; the group
+    /// label and trailing `;` are dropped.
+    func testAddressListFlattensGroups() {
+        let addresses = RFC2822.parseAddressList("Friends: alice@example.com, Bob <bob@example.org>;")
+        XCTAssertEqual(addresses, [
+            Address(name: nil, mailbox: "alice", host: "example.com"),
+            Address(name: "Bob", mailbox: "bob", host: "example.org")
+        ])
+    }
+
     // MARK: - Envelope(parsingHeaders:)
 
     func testEnvelopeFromHeadersMapsAllFields() {
         let headers = [
             "From": "Alice <alice@example.com>",
+            "Sender": "sender@example.com",
+            "Reply-To": "Alice Reply <reply@example.com>",
             "To": "bob@example.org, Carol <carol@x.com>",
             "Cc": "cc@example.net",
+            "Bcc": "bcc@example.net",
             "Subject": "Hello there",
             "Date": "Tue, 05 Oct 2021 11:03:08 -0400",
             "Message-ID": "<msg-1@example.com>",
@@ -92,11 +112,14 @@ final class RawRFC822ParsingTests: XCTestCase {
 
         XCTAssertEqual(envelope.subject, "Hello there")
         XCTAssertEqual(envelope.from, [Address(name: "Alice", mailbox: "alice", host: "example.com")])
+        XCTAssertEqual(envelope.sender, [Address(name: nil, mailbox: "sender", host: "example.com")])
+        XCTAssertEqual(envelope.replyTo, [Address(name: "Alice Reply", mailbox: "reply", host: "example.com")])
         XCTAssertEqual(envelope.to, [
             Address(name: nil, mailbox: "bob", host: "example.org"),
             Address(name: "Carol", mailbox: "carol", host: "x.com")
         ])
         XCTAssertEqual(envelope.cc, [Address(name: nil, mailbox: "cc", host: "example.net")])
+        XCTAssertEqual(envelope.bcc, [Address(name: nil, mailbox: "bcc", host: "example.net")])
         XCTAssertEqual(envelope.date, Date(timeIntervalSince1970: 1_633_446_188))
         XCTAssertEqual(envelope.messageId, MessageId(parsing: "msg-1@example.com"))
         XCTAssertEqual(envelope.inReplyTo, MessageId(parsing: "parent@example.com"))
