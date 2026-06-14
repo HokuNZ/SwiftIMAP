@@ -14,8 +14,8 @@ either a mechanical rename or a behaviour you were unlikely to depend on.
 | `IMAPError` | reshaped; some cases removed | update `switch`/`catch` (see below) |
 | `listMessages`, `fetchMessageBySequence` | removed | use the UID-based equivalents |
 | `searchMessagesComplex` | removed | use `searchMessages(in:matching:)` |
-| `MIMEPart.body` | removed | use `decodedText` / `decodedData` |
-| `messageId` / `inReplyTo` | now `MessageId?` (was `String?`) | read `.value` / `.bracketed` |
+| `MimePart.body` | removed | use `decodedText` / `decodedData` |
+| `messageID` / `inReplyTo` | now `MessageId?` (was `String?`) | read `.value` / `.bracketed` |
 | `references` | now `[MessageId]` (was `String?`) | iterate; `.value` / `.bracketed` per entry |
 | Targeted `expunge`/`delete` | throws without UIDPLUS | catch, or use `expunge(mailbox:)` |
 | `SequenceSet.set([])` | precondition failure | guard `isEmpty` before calling |
@@ -115,7 +115,7 @@ let results = try await client.searchMessages(
     in: "INBOX", matching: [.from("a@x.com"), .seen, .unflagged])
 ```
 
-## Removed: `MIMEPart.body`
+## Removed: `MimePart.body`
 
 `body` exposed a MimeParser dependency type (`MimeBody`) on the public surface.
 Use the decoded accessors, which need no `import MimeParser`:
@@ -139,7 +139,7 @@ bracket-stripping.
 
 ```swift
 // 1.x — String, bracketed, compared by hand
-if msg.envelope?.messageId == "<\(parentId)>" { ... }
+if msg.envelope?.messageID == "<\(parentId)>" { ... }
 let refs = (summary.references ?? "").split(separator: " ").map { /* strip <> */ }
 
 // 2.0
