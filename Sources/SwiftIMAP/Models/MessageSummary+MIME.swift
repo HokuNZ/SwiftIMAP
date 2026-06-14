@@ -7,13 +7,18 @@ extension MessageSummary {
     /// Reads no instance state, so callers with raw bytes but no populated
     /// `MessageSummary` (e.g. an `.eml` fixture harness) can parse without
     /// synthesising a stub instance.
+    ///
+    /// Bytes are decoded as UTF-8 with an ISO-8859-1 fallback, so a message whose
+    /// body is not valid UTF-8 — common in real mail — still parses. Throws
+    /// `IMAPError.parsingError` if the MIME structure itself cannot be parsed.
     public static func parseMIMEContent(from bodyData: Data) throws -> ParsedMIMEMessage? {
-        // Convert Data to String for MimeParser
-        guard let bodyString = String(data: bodyData, encoding: .utf8) else {
-            throw IMAPError.parsingError("Failed to decode body data as UTF-8")
-        }
+        // Decode UTF-8, falling back to ISO-8859-1 (which maps every byte) so a
+        // body that is not valid UTF-8 does not fail at the decode step. RFC 2047
+        // encoded-words carry non-ASCII in headers regardless of this charset.
+        let bodyString = String(data: bodyData, encoding: .utf8)
+            ?? String(data: bodyData, encoding: .isoLatin1)
+            ?? ""
 
-        // Parse the MIME content
         let parser = MimeParser()
         let mime = try parser.parse(bodyString)
 

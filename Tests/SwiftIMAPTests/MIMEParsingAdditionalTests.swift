@@ -2,17 +2,8 @@ import XCTest
 @testable import SwiftIMAP
 
 final class MIMEParsingAdditionalTests: XCTestCase {
-    func testParseMimeContentRejectsNonUtf8() {
-        let bodyData = Data([0xFF, 0xFE, 0xFD])
-        let summary = makeSummary()
-
-        XCTAssertThrowsError(try summary.parseMIMEContent(from: bodyData)) { error in
-            guard case IMAPError.parsingError(let message) = error else {
-                return XCTFail("Expected parsingError")
-            }
-            XCTAssertTrue(message.contains("UTF-8"))
-        }
-    }
+    // Non-UTF-8 bodies no longer throw at the decode step (#70); the ISO-8859-1
+    // fallback is covered by MIMEParsingTests.testParseMimeContentDecodesNonUTF8BodyViaLatin1.
 
     func testHeadersAndTransferEncodingCaptured() throws {
         let messageData = """
