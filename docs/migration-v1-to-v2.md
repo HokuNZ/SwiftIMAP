@@ -188,6 +188,11 @@ These are not required changes, but 2.0 lets you remove workarounds:
   (see below), so threading comparisons need no bracket-stripping.
 - **Fire-and-forget `disconnect()`**: `disconnect()` now bounds a hung `LOGOUT`
   itself (`min(commandTimeout, 5s)`).
+- **Hand-rolled RFC 2822 parsers**: if you build a typed model from raw message
+  bytes or headers (`.eml` files, Maildir, webhook payloads, test fixtures), use
+  `MessageSummary.parse(rfc822:)` or `Envelope(parsingHeaders:)` instead of a
+  parallel parser, so the raw-bytes path maps through the same code as a live
+  `FETCH`.
 
 ## Naming standardisation
 

@@ -27,6 +27,39 @@ extension MessageSummary {
     public func parseMIMEContent(from bodyData: Data) throws -> ParsedMIMEMessage? {
         try MessageSummary.parseMIMEContent(from: bodyData)
     }
+
+    /// Build a `MessageSummary` from a complete RFC 822 message.
+    ///
+    /// For consumers with raw message bytes rather than a live IMAP `FETCH`
+    /// (`.eml` importers, Maildir readers, webhook payloads, offline fixtures):
+    /// parses the headers into a typed `Envelope` (see
+    /// ``Envelope/init(parsingHeaders:)``) and populates `references` from the
+    /// `References` header.
+    ///
+    /// The `uid` and `sequenceNumber` are synthesised as `0` — there is no IMAP
+    /// session to assign them. `internalDate` comes from the `Date` header, or
+    /// the current time if it is missing or unparseable. `size` is the byte
+    /// length of `data`.
+    ///
+    /// Throws `IMAPError.parsingError` if the bytes are not valid UTF-8 or the
+    /// MIME structure cannot be parsed.
+    public static func parse(rfc822 data: Data) throws -> MessageSummary {
+        guard let parsed = try parseMIMEContent(from: data) else {
+            throw IMAPError.parsingError("Could not parse RFC822 message")
+        }
+
+        let envelope = Envelope(parsingHeaders: parsed.headers)
+        let references = MessageId.parseList(parsed.headers["references"] ?? "")
+
+        return MessageSummary(
+            uid: 0,
+            sequenceNumber: 0,
+            internalDate: envelope.date ?? Date(),
+            size: UInt32(data.count),
+            envelope: envelope,
+            references: references
+        )
+    }
 }
 
 /// A parsed MIME message with convenient access to parts
