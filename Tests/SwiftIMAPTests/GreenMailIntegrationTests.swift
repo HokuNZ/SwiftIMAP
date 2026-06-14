@@ -610,7 +610,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertEqual(remaining.count, 1)
     }
 
-    // MARK: - UID Search Tests (Issue #1)
+    // MARK: - UID Search Tests
 
     /// Test that listMessageUIDs returns stable UIDs that can be used for subsequent operations
     func testListMessageUIDsReturnsStableUIDs() async throws {
@@ -691,7 +691,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         }
     }
 
-    // MARK: - Fetch UID Verification Tests (Issue #2)
+    // MARK: - Fetch UID Verification Tests
 
     /// Test that fetchMessage returns the correct message when multiple messages exist
     func testFetchMessageReturnsCorrectMessageByUID() async throws {

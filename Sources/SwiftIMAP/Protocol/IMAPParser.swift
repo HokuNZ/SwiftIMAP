@@ -136,12 +136,12 @@ public final class IMAPParser {
         let lineData = buffer.subdata(in: buffer.startIndex..<crlfRange.lowerBound)
         // RFC 3501 says protocol bytes are 7-bit ASCII, but real-world servers
         // (notably GreenMail with non-ASCII local-parts, and any server emitting
-        // raw UTF-8 without ENABLE UTF8=ACCEPT per RFC 6855) violate this. Strict
-        // UTF-8 decode used to return nil here, which left the line in the buffer
-        // forever — the parser would silently stall waiting for a CRLF that had
-        // already arrived. Fall back to ISO-8859-1, which maps every byte 0x00–0xFF
-        // to a Unicode code point and so cannot fail for any finite byte sequence;
-        // the force-unwrap documents that invariant rather than swallowing a line.
+        // raw UTF-8 without ENABLE UTF8=ACCEPT per RFC 6855) violate this. A strict
+        // UTF-8 decode would return nil here and leave the line in the buffer
+        // forever, stalling the parser on a CRLF that has already arrived. Fall
+        // back to ISO-8859-1, which maps every byte 0x00–0xFF to a Unicode code
+        // point and so cannot fail for any finite byte sequence; the force-unwrap
+        // documents that invariant rather than swallowing a line.
         let line = String(data: lineData, encoding: .utf8)
             ?? String(data: lineData, encoding: .isoLatin1)!
 

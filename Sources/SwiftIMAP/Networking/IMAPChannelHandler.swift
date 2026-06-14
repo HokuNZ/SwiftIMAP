@@ -6,7 +6,7 @@ import NIOPosix
 /// Inbound IMAP response handler. Buffers parsed responses (and parse/IO
 /// errors) when no `responseHandler` is registered, so the greeting is not
 /// lost in the race between `bootstrap.connect()` resolving and the consumer
-/// installing a handler via `setResponseHandler`. See #21.
+/// installing a handler via `setResponseHandler`.
 final class IMAPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer

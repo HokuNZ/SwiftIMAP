@@ -27,8 +27,8 @@ final class MIMEParsingAdditionalTests: XCTestCase {
     }
 
     func testInlinePartWithFilenameIsAttachment() throws {
-        // Issue #5: Inline parts WITH a filename should be treated as attachments
-        // (e.g., Apple Mail marks PDF attachments as inline with filename)
+        // Inline parts WITH a filename are treated as attachments
+        // (e.g. Apple Mail marks PDF attachments as inline with a filename).
         let messageData = """
         From: sender@example.com
         To: recipient@example.com
@@ -161,7 +161,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
     }
 
     func testAppleMailInlinePdfIsAttachment() throws {
-        // Real-world case from issue #5: Apple Mail marks PDFs as inline with filename
+        // Real-world case: Apple Mail marks PDFs as inline with a filename.
         let messageData = """
         From: sender@example.com
         To: recipient@example.com

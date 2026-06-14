@@ -2,8 +2,8 @@ import XCTest
 @testable import SwiftIMAP
 import NIO
 
-/// Tests for Issue #1: searchMessages() should use UIDs instead of sequence numbers
-/// to avoid race conditions when mailbox changes between search and fetch operations.
+/// searchMessages() uses UIDs instead of sequence numbers to avoid race
+/// conditions when the mailbox changes between search and fetch operations.
 final class IMAPClientUIDSearchTests: XCTestCase {
     private var eventLoopGroup: MultiThreadedEventLoopGroup!
     private var mockServer: MockIMAPServer!

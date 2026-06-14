@@ -16,7 +16,7 @@ final class IMAPChannelHandlerTests: XCTestCase {
     }
 
     /// Greeting that arrives before any handler is installed must be replayed
-    /// to the next handler set, not dropped. This is the #21 fix.
+    /// to the next handler set, not dropped.
     func testResponsesArrivingBeforeHandlerAreBufferedAndReplayed() throws {
         let handler = makeHandler()
         let channel = EmbeddedChannel(handler: handler)

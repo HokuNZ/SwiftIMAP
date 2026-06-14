@@ -2,8 +2,8 @@ import XCTest
 @testable import SwiftIMAP
 import NIO
 
-/// Tests for Issue #2: fetchMessageBody and fetchMessage must verify UID in response
-/// matches the requested UID to avoid returning wrong data when multiple fetches are pending.
+/// fetchMessageBody and fetchMessage must verify the UID in the response matches
+/// the requested UID, to avoid returning wrong data when multiple fetches are pending.
 final class IMAPClientFetchUIDVerificationTests: XCTestCase {
     private var eventLoopGroup: MultiThreadedEventLoopGroup!
     private var mockServer: MockIMAPServer!
