@@ -54,11 +54,16 @@ enum RFC2822 {
     /// - unfolds folded header lines (RFC 5322 §2.2.3);
     /// - keeps the first occurrence of a repeated field name.
     static func parseHeaderFields(from data: Data) -> [String: String] {
-        // Headers are 7-bit per RFC 5322, but real messages carry ISO-8859-1 (or
-        // RFC 2047 encoded-words). Latin-1 maps every byte losslessly, so it is a
-        // safe fallback when the bytes are not valid UTF-8.
-        let text = String(data: data, encoding: .utf8)
-            ?? String(data: data, encoding: .isoLatin1)
+        // Decode only the header block — the bytes up to the first blank line — not
+        // the whole message. Decoding everything would let a single non-UTF-8 byte
+        // in the *body* force the Latin-1 fallback onto the *headers* (mis-decoding
+        // valid UTF-8 header text), and would copy a large body into a String just
+        // to read headers. Headers are 7-bit per RFC 5322 but real ones carry
+        // ISO-8859-1 or RFC 2047 encoded-words; Latin-1 maps every byte, so it is a
+        // safe fallback for the header block when it is not valid UTF-8.
+        let headerData = headerBlockBytes(of: data)
+        let text = String(data: headerData, encoding: .utf8)
+            ?? String(data: headerData, encoding: .isoLatin1)
             ?? ""
 
         // Normalise all three historic line endings to "\n": CRLF first, then any
@@ -75,10 +80,8 @@ enum RFC2822 {
             }
         }
 
-        // The header block ends at the first blank line.
-        let headerBlock = normalised.range(of: "\n\n").map { normalised[..<$0.lowerBound] }
-            ?? normalised[...]
-
+        // `normalised` is already just the header block (the body was excluded by
+        // headerBlockBytes), so every line here is a header or a fold continuation.
         var headers: [String: String] = [:]
         var logical = ""
         func commit(_ line: String) {
@@ -87,7 +90,7 @@ enum RFC2822 {
             guard !name.isEmpty, headers[name] == nil else { return }
             headers[name] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         }
-        for line in headerBlock.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in normalised.split(separator: "\n", omittingEmptySubsequences: false) {
             if let first = line.first, first == " " || first == "\t" {
                 logical += " " + line.trimmingCharacters(in: .whitespaces)   // unfold
             } else {
@@ -97,6 +100,22 @@ enum RFC2822 {
         }
         if !logical.isEmpty { commit(logical) }
         return headers
+    }
+
+    /// The bytes of the message header block: everything up to the first blank
+    /// line. The blank-line separator is matched in raw bytes (covering CRLF, LF,
+    /// and bare-CR line endings) so the boundary is found without first decoding
+    /// the whole message. Returns the whole input if there is no blank line.
+    private static func headerBlockBytes(of data: Data) -> Data {
+        let separators: [[UInt8]] = [[13, 10, 13, 10], [10, 10], [13, 13]]
+        var boundary: Data.Index?
+        for separator in separators {
+            if let range = data.range(of: Data(separator)) {
+                boundary = boundary.map { Swift.min($0, range.lowerBound) } ?? range.lowerBound
+            }
+        }
+        guard let boundary else { return data }
+        return data.prefix(upTo: boundary)
     }
 
     /// RFC 2822 date formats, tried in order. Mirrors the set a real-world mail
