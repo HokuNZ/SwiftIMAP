@@ -14,11 +14,12 @@ either a mechanical rename or a behaviour you were unlikely to depend on.
 | `IMAPError` | reshaped; some cases removed | update `switch`/`catch` (see below) |
 | `listMessages`, `fetchMessageBySequence` | removed | use the UID-based equivalents |
 | `searchMessagesComplex` | removed | use `searchMessages(in:matching:)` |
-| `MimePart.body` | removed | use `decodedText` / `decodedData` |
-| `messageID` / `inReplyTo` | now `MessageID?` (was `String?`) | read `.value` / `.bracketed` |
-| `references` | now `[MessageID]` (was `String?`) | iterate; `.value` / `.bracketed` per entry |
+| `MIMEPart.body` | removed | use `decodedText` / `decodedData` |
+| `messageId` / `inReplyTo` | now `MessageId?` (was `String?`) | read `.value` / `.bracketed` |
+| `references` | now `[MessageId]` (was `String?`) | iterate; `.value` / `.bracketed` per entry |
 | Targeted `expunge`/`delete` | throws without UIDPLUS | catch, or use `expunge(mailbox:)` |
 | `SequenceSet.set([])` | precondition failure | guard `isEmpty` before calling |
+| `Mime`/`ID` casing | `ParsedMimeMessage`→`ParsedMIMEMessage`, `MimePart`→`MIMEPart`, `parseMimeContent`→`parseMIMEContent`, `MessageID`→`MessageId` | rename references |
 
 ## `IMAPError` is reshaped
 
@@ -114,7 +115,7 @@ let results = try await client.searchMessages(
     in: "INBOX", matching: [.from("a@x.com"), .seen, .unflagged])
 ```
 
-## Removed: `MimePart.body`
+## Removed: `MIMEPart.body`
 
 `body` exposed a MimeParser dependency type (`MimeBody`) on the public surface.
 Use the decoded accessors, which need no `import MimeParser`:
@@ -128,22 +129,22 @@ let text = part.decodedText      // decoded text, raw fallback on decode failure
 let data = part.decodedData      // decoded bytes (e.g. for attachments)
 ```
 
-## Message identifiers are now `MessageID`
+## Message identifiers are now `MessageId`
 
-`Envelope.messageID`, `Envelope.inReplyTo`, and each entry of
-`MessageSummary.references` are now `MessageID` values rather than `String`s.
-`MessageID` canonicalises to the bare form (no angle brackets), so identifiers
+`Envelope.messageId`, `Envelope.inReplyTo`, and each entry of
+`MessageSummary.references` are now `MessageId` values rather than `String`s.
+`MessageId` canonicalises to the bare form (no angle brackets), so identifiers
 compare equal regardless of how the server framed them — threading needs no
 bracket-stripping.
 
 ```swift
 // 1.x — String, bracketed, compared by hand
-if msg.envelope?.messageID == "<\(parentId)>" { ... }
+if msg.envelope?.messageId == "<\(parentId)>" { ... }
 let refs = (summary.references ?? "").split(separator: " ").map { /* strip <> */ }
 
 // 2.0
-if msg.envelope?.messageID == parentMessageID { ... }   // MessageID == MessageID
-let refs: [MessageID] = summary.references               // already parsed, ordered
+if msg.envelope?.messageId == parentMessageId { ... }   // MessageId == MessageId
+let refs: [MessageId] = summary.references               // already parsed, ordered
 
 id.value        // "abc@host"  — bare canonical identity (also `description`)
 id.bracketed    // "<abc@host>" — to write into an outgoing header
@@ -153,8 +154,8 @@ Working from raw header strings (e.g. a full-message fetch) rather than the
 model? Normalise the same way with the stateless parsers:
 
 ```swift
-let mid  = MessageID(parsing: headers["Message-Id"] ?? "")      // MessageID?
-let refs = MessageID.parseList(headers["References"] ?? "")      // [MessageID]
+let mid  = MessageId(parsing: headers["Message-Id"] ?? "")      // MessageId?
+let refs = MessageId.parseList(headers["References"] ?? "")      // [MessageId]
 ```
 
 ## Behavioural: targeted expunge/delete require UIDPLUS
@@ -183,10 +184,24 @@ These are not required changes, but 2.0 lets you remove workarounds:
 - **`STATUS`-then-write UIDVALIDITY guards**: pass `expectedUIDValidity:` to
   `storeFlags` / `moveMessage(s)` / `copyMessage(s)` / `expunge(uids:)` instead.
   The check rides on the operation's own `SELECT` (atomic, no extra round trip).
-- **Manual message-ID bracket handling**: identifiers are now `MessageID`
+- **Manual message-ID bracket handling**: identifiers are now `MessageId`
   (see below), so threading comparisons need no bracket-stripping.
 - **Fire-and-forget `disconnect()`**: `disconnect()` now bounds a hung `LOGOUT`
   itself (`min(commandTimeout, 5s)`).
+
+## Naming standardisation
+
+Two cosmetic renames to a consistent house style (both mechanical — rename the
+references):
+
+- **`MIME` is upper-cased** as an initialism: `ParsedMimeMessage` →
+  `ParsedMIMEMessage`, `MimePart` → `MIMEPart`, and `parseMimeContent(from:)` →
+  `parseMIMEContent(from:)` (static and instance).
+- **Identifier names use `Id`, not `ID`**: the `MessageID` type is now
+  `MessageId`, and `Envelope.messageID` is now `messageId`.
+
+The `UID` typealias is **unchanged** — it is established IMAP/RFC vocabulary.
+The external `MimeParser` dependency keeps its own name.
 
 ## Enum evolution
 

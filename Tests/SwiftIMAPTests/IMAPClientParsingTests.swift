@@ -69,11 +69,11 @@ final class IMAPClientParsingTests: XCTestCase {
             cc: nil,
             bcc: nil,
             inReplyTo: nil,
-            messageID: nil,
+            messageId: nil,
             rawDate: nil,
             rawSubject: nil,
             rawInReplyTo: nil,
-            rawMessageID: nil
+            rawMessageId: nil
         )
 
         let envelope = client.parseEnvelope(envelopeData)

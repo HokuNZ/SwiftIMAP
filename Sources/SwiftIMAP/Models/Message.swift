@@ -18,10 +18,10 @@ public struct MessageSummary: Sendable, Equatable {
     /// (the threading ancestry chain). Empty unless the fetch includes a
     /// `BODY[HEADER.FIELDS (REFERENCES)]` item (with or without `.PEEK`).
     ///
-    /// These compare directly against any `Envelope.messageID` / `inReplyTo`
+    /// These compare directly against any `Envelope.messageId` / `inReplyTo`
     /// without bracket handling. To re-emit the header, use
     /// `.map(\.bracketed).joined(separator: " ")`.
-    public let references: [MessageID]
+    public let references: [MessageId]
 
     public init(
         uid: UID,
@@ -31,7 +31,7 @@ public struct MessageSummary: Sendable, Equatable {
         internalDate: Date,
         size: UInt32,
         envelope: Envelope? = nil,
-        references: [MessageID] = []
+        references: [MessageId] = []
     ) {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
@@ -97,9 +97,9 @@ public struct Envelope: Sendable, Equatable {
     public let bcc: [Address]
     public let bccEntries: [AddressListEntry]
     /// The parent message this is a reply to (`In-Reply-To`), normalised.
-    public let inReplyTo: MessageID?
+    public let inReplyTo: MessageId?
     /// This message's own identifier (`Message-ID`), normalised.
-    public let messageID: MessageID?
+    public let messageId: MessageId?
     
     public init(
         date: Date? = nil,
@@ -116,8 +116,8 @@ public struct Envelope: Sendable, Equatable {
         ccEntries: [AddressListEntry]? = nil,
         bcc: [Address] = [],
         bccEntries: [AddressListEntry]? = nil,
-        inReplyTo: MessageID? = nil,
-        messageID: MessageID? = nil
+        inReplyTo: MessageId? = nil,
+        messageId: MessageId? = nil
     ) {
         self.date = date
         self.subject = subject
@@ -134,7 +134,7 @@ public struct Envelope: Sendable, Equatable {
         self.bcc = bcc
         self.bccEntries = bccEntries ?? bcc.map { .mailbox($0) }
         self.inReplyTo = inReplyTo
-        self.messageID = messageID
+        self.messageId = messageId
     }
 }
 

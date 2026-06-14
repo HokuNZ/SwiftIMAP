@@ -11,7 +11,7 @@ extension IMAPClient {
         var internalDate: Date?
         var size: UInt32?
         var envelope: Envelope?
-        var references: [MessageID] = []
+        var references: [MessageId] = []
 
         for attribute in attributes {
             switch attribute {
@@ -65,7 +65,7 @@ extension IMAPClient {
     /// identifiers (oldest first). The data format is
     /// "References: <id1> <id2> ...\r\n", optionally RFC 5322 folded across
     /// multiple lines with CRLF followed by WSP continuations.
-    func parseReferencesHeader(from data: Data) -> [MessageID] {
+    func parseReferencesHeader(from data: Data) -> [MessageId] {
         let headerText: String
         if let utf8 = String(data: data, encoding: .utf8) {
             headerText = utf8
@@ -84,7 +84,7 @@ extension IMAPClient {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.lowercased().hasPrefix("references:") {
                 let value = String(trimmed.dropFirst("references:".count))
-                return MessageID.parseList(value)
+                return MessageId.parseList(value)
             }
         }
         return []
@@ -119,8 +119,8 @@ extension IMAPClient {
             ccEntries: ccList.entries,
             bcc: bccList.flat,
             bccEntries: bccList.entries,
-            inReplyTo: data.inReplyTo.flatMap(MessageID.init(parsing:)),
-            messageID: data.messageID.flatMap(MessageID.init(parsing:))
+            inReplyTo: data.inReplyTo.flatMap(MessageId.init(parsing:)),
+            messageId: data.messageId.flatMap(MessageId.init(parsing:))
         )
     }
 

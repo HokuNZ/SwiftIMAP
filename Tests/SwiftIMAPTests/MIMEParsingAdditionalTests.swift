@@ -6,7 +6,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         let bodyData = Data([0xFF, 0xFE, 0xFD])
         let summary = makeSummary()
 
-        XCTAssertThrowsError(try summary.parseMimeContent(from: bodyData)) { error in
+        XCTAssertThrowsError(try summary.parseMIMEContent(from: bodyData)) { error in
             guard case IMAPError.parsingError(let message) = error else {
                 return XCTFail("Expected parsingError")
             }
@@ -27,7 +27,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
 
         XCTAssertEqual(parsed?.headers["x-custom"], "CustomValue")
         XCTAssertEqual(parsed?.charset, "iso-8859-1")
@@ -50,7 +50,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.mimeType, "image/png")
@@ -84,7 +84,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let inlinePart = parsed?.parts.first { $0.contentID != nil }
 
         XCTAssertNotNil(inlinePart)
@@ -106,7 +106,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.mimeType, "application/pdf")
@@ -127,7 +127,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.decodedText, "NotBase64!!")
@@ -158,7 +158,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let imagePart = parsed?.parts.first { $0.contentID != nil }
 
         XCTAssertNotNil(imagePart)
@@ -183,7 +183,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.filename, "document.pdf")
