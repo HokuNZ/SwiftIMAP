@@ -44,11 +44,15 @@ extension MessageSummary {
     /// Throws `IMAPError.parsingError` if the bytes are not valid UTF-8 or the
     /// MIME structure cannot be parsed.
     public static func parse(rfc822 data: Data) throws -> MessageSummary {
+        // parseMIMEContent throws on bad input rather than returning nil; the
+        // guard is defensive against the optional return type.
         guard let parsed = try parseMIMEContent(from: data) else {
             throw IMAPError.parsingError("Could not parse RFC822 message")
         }
 
         let envelope = Envelope(parsingHeaders: parsed.headers)
+        // ParsedMIMEMessage stores header names lower-cased, so look up the
+        // lower-cased key directly.
         let references = MessageId.parseList(parsed.headers["references"] ?? "")
 
         return MessageSummary(
