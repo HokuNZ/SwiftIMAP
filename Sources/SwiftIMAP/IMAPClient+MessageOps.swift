@@ -252,12 +252,20 @@ extension IMAPClient {
     }
 
     /// Delete a message (mark as deleted, then `UID EXPUNGE` it).
-    public func deleteMessage(uid: UID, in mailbox: String) async throws {
-        try await deleteMessages(uids: [uid], in: mailbox)
+    ///
+    /// - Parameter expectedUIDValidity: when non-nil, the delete is refused with
+    ///   `IMAPError.uidValidityChanged` if the mailbox's current `UIDVALIDITY`
+    ///   differs, guarding against deleting UIDs from a stale mailbox view.
+    public func deleteMessage(uid: UID, in mailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
+        try await deleteMessages(uids: [uid], in: mailbox, expectedUIDValidity: expectedUIDValidity)
     }
 
     /// Delete multiple messages (one batched STORE, then `UID EXPUNGE`).
-    public func deleteMessages(uids: [UID], in mailbox: String) async throws {
+    ///
+    /// - Parameter expectedUIDValidity: when non-nil, the delete is refused with
+    ///   `IMAPError.uidValidityChanged` if the mailbox's current `UIDVALIDITY`
+    ///   differs, guarding against deleting UIDs from a stale mailbox view.
+    public func deleteMessages(uids: [UID], in mailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         guard !uids.isEmpty else { return }
 
         // Refuse before storing \Deleted: throwing only at the expunge step
@@ -267,7 +275,14 @@ extension IMAPClient {
             throw IMAPError.unsupportedCapability("UIDPLUS")
         }
 
-        try await storeFlags(uids: uids, in: mailbox, flags: [.deleted], action: .add)
-        try await expunge(uids: uids, in: mailbox)
+        // One SELECT (carrying the optional UIDVALIDITY guard) covers both the
+        // STORE and the UID EXPUNGE, so the named UIDs cannot shift between them
+        // and the mailbox is selected only once.
+        _ = try await selectMailbox(mailbox, verifyingUIDValidity: expectedUIDValidity)
+
+        let sequence = IMAPCommand.SequenceSet.set(uids)
+        let deleteFlag = IMAPCommand.StoreFlags(action: .add, flags: [Flag.deleted])
+        _ = try await connection.sendCommand(.uid(.store(sequence: sequence, flags: deleteFlag, silent: false)))
+        _ = try await connection.sendCommand(.uid(.expunge(sequence: sequence)))
     }
 }

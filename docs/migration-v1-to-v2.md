@@ -182,7 +182,8 @@ These are not required changes, but 2.0 lets you remove workarounds:
   client, a reconnect on a stale one. Keep one `IMAPClient` and call `connect()`
   again after an error instead of discarding and rebuilding it.
 - **`STATUS`-then-write UIDVALIDITY guards**: pass `expectedUIDValidity:` to
-  `storeFlags` / `moveMessage(s)` / `copyMessage(s)` / `expunge(uids:)` instead.
+  `storeFlags` / `moveMessage(s)` / `copyMessage(s)` / `expunge(uids:)` /
+  `deleteMessage(s)` instead.
   The check rides on the operation's own `SELECT` (atomic, no extra round trip).
 - **Manual message-ID bracket handling**: identifiers are now `MessageId`
   (see below), so threading comparisons need no bracket-stripping.
@@ -193,6 +194,11 @@ These are not required changes, but 2.0 lets you remove workarounds:
   `MessageSummary.parse(rfc822:)` or `Envelope(parsingHeaders:)` instead of a
   parallel parser, so the raw-bytes path maps through the same code as a live
   `FETCH`.
+  - Note one difference between the two paths: a live `ENVELOPE` preserves
+    address groups in the `*Entries` arrays (e.g. `toEntries`), whereas the
+    raw-header path (`Envelope(parsingHeaders:)`) flattens a group to its
+    member addresses. If you read `*Entries` and care about group structure,
+    it is only populated on the `FETCH` path.
 
 ## Naming standardisation
 
