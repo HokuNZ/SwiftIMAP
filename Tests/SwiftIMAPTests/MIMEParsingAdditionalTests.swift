@@ -2,8 +2,8 @@ import XCTest
 @testable import SwiftIMAP
 
 final class MIMEParsingAdditionalTests: XCTestCase {
-    // Non-UTF-8 bodies no longer throw at the decode step (#70); the ISO-8859-1
-    // fallback is covered by MIMEParsingTests.testParseMimeContentDecodesNonUTF8BodyViaLatin1.
+    // The ISO-8859-1 decode fallback for non-UTF-8 bodies is covered by
+    // MIMEParsingTests.testParseMimeContentDecodesNonUTF8BodyViaLatin1.
 
     func testHeadersAndTransferEncodingCaptured() throws {
         let messageData = """

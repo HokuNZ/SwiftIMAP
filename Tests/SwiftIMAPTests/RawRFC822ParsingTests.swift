@@ -224,7 +224,7 @@ final class RawRFC822ParsingTests: XCTestCase {
     }
 
     /// The envelope survives a body that is not valid UTF-8: header parsing is
-    /// decoupled from the body, with an ISO-8859-1 fallback for decoding (#67).
+    /// decoupled from the body, with an ISO-8859-1 fallback for decoding.
     func testParseRFC822RecoversEnvelopeFromNonUTF8Body() throws {
         var bytes = Data("""
         From: Alice <alice@example.com>
@@ -242,7 +242,7 @@ final class RawRFC822ParsingTests: XCTestCase {
     }
 
     /// A leading mbox `From ` envelope line (RFC 4155, emitted by archive
-    /// converters) is stripped before header parsing (#67).
+    /// converters) is stripped before header parsing.
     func testParseRFC822StripsMboxPreamble() throws {
         let raw = """
         From archive@example.com Mon Jan  1 00:00:00 2024
@@ -274,5 +274,56 @@ final class RawRFC822ParsingTests: XCTestCase {
             MessageId(parsing: "b@x.com"),
             MessageId(parsing: "c@x.com")
         ])
+    }
+
+    /// A header folded with a leading space (not just a tab) is unfolded.
+    func testParseRFC822UnfoldsSpaceFoldedHeader() throws {
+        let raw = "From: Alice <alice@example.com>\r\nReferences: <a@x.com>\r\n <b@x.com>\r\nSubject: S\r\n\r\nbody"
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.references, [MessageId(parsing: "a@x.com"), MessageId(parsing: "b@x.com")])
+    }
+
+    /// Bare-CR line endings (old-Mac / malformed) still split into headers
+    /// rather than collapsing into one line.
+    func testParseRFC822HandlesBareCRLineEndings() throws {
+        let raw = "From: Alice <alice@example.com>\rSubject: CR only\r\rbody"
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.envelope?.from, [Address(name: "Alice", mailbox: "alice", host: "example.com")])
+        XCTAssertEqual(summary.envelope?.subject, "CR only")
+    }
+
+    /// Bare-LF line endings (Unix Maildir) parse without the CRLF normalisation.
+    func testParseRFC822HandlesBareLFLineEndings() throws {
+        let raw = "From: Alice <alice@example.com>\nSubject: LF only\n\nbody"
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.envelope?.from, [Address(name: "Alice", mailbox: "alice", host: "example.com")])
+        XCTAssertEqual(summary.envelope?.subject, "LF only")
+    }
+
+    /// A repeated field keeps the first occurrence, deterministically.
+    func testParseRFC822KeepsFirstOccurrenceOfDuplicateField() throws {
+        let raw = "From: alice@example.com\r\nSubject: First\r\nSubject: Second\r\n\r\nbody"
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.envelope?.subject, "First")
+    }
+
+    /// A non-UTF-8 byte inside a header value (an ISO-8859-1 display name) does
+    /// not defeat header parsing.
+    func testParseRFC822RecoversHeaderWithNonUTF8Byte() throws {
+        var bytes = Data("From: ".utf8)
+        bytes.append(0xC9)  // É in ISO-8859-1, invalid as a standalone UTF-8 byte
+        bytes.append(contentsOf: Data("ric <eric@example.com>\r\nSubject: S\r\n\r\nbody".utf8))
+
+        let summary = try MessageSummary.parse(rfc822: bytes)
+        XCTAssertEqual(summary.envelope?.from.first?.mailbox, "eric")
+        XCTAssertEqual(summary.envelope?.from.first?.name, "Éric")
+    }
+
+    /// A header-only message with no terminating blank line still parses.
+    func testParseRFC822ParsesHeadersWithoutTerminatingBlankLine() throws {
+        let raw = "From: alice@example.com\r\nSubject: No body"
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.envelope?.from.first?.mailbox, "alice")
+        XCTAssertEqual(summary.envelope?.subject, "No body")
     }
 }
