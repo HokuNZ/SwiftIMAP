@@ -237,6 +237,38 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// A reduced item set still yields a complete summary: the required
+    /// attributes (UID, internal date, size) are auto-added to the fetch, so the
+    /// caller never hits a "missing required attributes" parse failure.
+    func testFetchWithReducedItemSetAutoAddsSummaryAttributes() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(
+            for: "UID FETCH",
+            response: "* 1 FETCH (UID 1 FLAGS (\\Seen) " +
+                      "INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 42)"
+        )
+
+        let client = makeClient()
+        try await client.connect()
+
+        // Caller requests only flags; UID/INTERNALDATE/RFC822.SIZE are added.
+        let summary = try await client.fetchMessage(uid: 1, in: "INBOX", items: [.flags])
+
+        XCTAssertNotNil(summary, "A reduced item set must still yield a summary, not a parse failure")
+        XCTAssertEqual(summary?.uid, 1)
+        XCTAssertEqual(summary?.size, 42)
+
+        let fetch = mockServer.receivedCommands.first { $0.uppercased().contains("UID FETCH") } ?? ""
+        let upper = fetch.uppercased()
+        XCTAssertTrue(upper.contains("UID"), "auto-added UID: \(fetch)")
+        XCTAssertTrue(upper.contains("INTERNALDATE"), "auto-added INTERNALDATE: \(fetch)")
+        XCTAssertTrue(upper.contains("RFC822.SIZE"), "auto-added RFC822.SIZE: \(fetch)")
+
+        await client.disconnect()
+    }
+
     func testFetchMessageWithoutCustomKeywordsHasEmptyKeywords() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")

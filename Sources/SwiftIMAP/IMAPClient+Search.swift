@@ -62,11 +62,11 @@ extension IMAPClient {
             work: {
                 _ = try await self.selectMailbox(mailbox)
 
-                // Ensure UID is fetched so each response can be mapped back to its
+                // Ensure the summary's required attributes are fetched from a
+                // reduced item set; UID also maps each response back to its
                 // requested UID (responses may arrive in any order, and a UID may
                 // be absent if the message was deleted between search and fetch).
-                let hasUID = fetchItems.contains { if case .uid = $0 { return true } else { return false } }
-                let items = hasUID ? fetchItems : [.uid] + fetchItems
+                let items = self.summaryFetchItems(fetchItems)
 
                 let responses = try await self.connection.sendCommand(
                     .uid(.fetch(sequence: .set(uidsToFetch), items: items))
