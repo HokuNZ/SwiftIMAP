@@ -7,7 +7,7 @@ extension MessageSummary {
     /// Reads no instance state, so callers with raw bytes but no populated
     /// `MessageSummary` (e.g. an `.eml` fixture harness) can parse without
     /// synthesising a stub instance.
-    public static func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
+    public static func parseMIMEContent(from bodyData: Data) throws -> ParsedMIMEMessage? {
         // Convert Data to String for MimeParser
         guard let bodyString = String(data: bodyData, encoding: .utf8) else {
             throw IMAPError.parsingError("Failed to decode body data as UTF-8")
@@ -17,25 +17,25 @@ extension MessageSummary {
         let parser = MimeParser()
         let mime = try parser.parse(bodyString)
 
-        return ParsedMimeMessage(from: mime)
+        return ParsedMIMEMessage(from: mime)
     }
 
     /// Parse MIME content from the given body data.
     ///
-    /// Convenience wrapper over the static `parseMimeContent(from:)` for callers
+    /// Convenience wrapper over the static `parseMIMEContent(from:)` for callers
     /// that already hold a `MessageSummary`. No instance state is used.
-    public func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
-        try MessageSummary.parseMimeContent(from: bodyData)
+    public func parseMIMEContent(from bodyData: Data) throws -> ParsedMIMEMessage? {
+        try MessageSummary.parseMIMEContent(from: bodyData)
     }
 }
 
 /// A parsed MIME message with convenient access to parts
-public struct ParsedMimeMessage: Sendable, Equatable {
+public struct ParsedMIMEMessage: Sendable, Equatable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
     public let transferEncoding: String?
-    public let parts: [MimePart]
+    public let parts: [MIMEPart]
     public let boundary: String?
     public let isMultipart: Bool
 
@@ -49,14 +49,14 @@ public struct ParsedMimeMessage: Sendable, Equatable {
     }
 
     init(from mime: Mime) {
-        let headerInfo = ParsedMimeMessage.parseHeaderInfo(from: mime.header)
+        let headerInfo = ParsedMIMEMessage.parseHeaderInfo(from: mime.header)
         self.headers = headerInfo.headers
         self.contentType = headerInfo.contentType
         self.charset = headerInfo.charset
         self.transferEncoding = headerInfo.transferEncoding
         self.boundary = headerInfo.boundary
         self.isMultipart = headerInfo.isMultipart
-        self.parts = ParsedMimeMessage.extractParts(from: mime)
+        self.parts = ParsedMIMEMessage.extractParts(from: mime)
     }
 
     private static func parseHeaderInfo(from header: MimeHeader) -> HeaderInfo {
@@ -107,13 +107,13 @@ public struct ParsedMimeMessage: Sendable, Equatable {
     }
     
     /// Recursively extract all parts from a MIME message
-    private static func extractParts(from mime: Mime) -> [MimePart] {
-        var allParts: [MimePart] = []
+    private static func extractParts(from mime: Mime) -> [MIMEPart] {
+        var allParts: [MIMEPart] = []
         
         switch mime.content {
         case .body(let body):
-            let headerInfo = ParsedMimeMessage.parseHeaderInfo(from: mime.header)
-            let part = MimePart(
+            let headerInfo = ParsedMIMEMessage.parseHeaderInfo(from: mime.header)
+            let part = MIMEPart(
                 body: body,
                 headers: headerInfo.headers,
                 contentType: headerInfo.contentType,
@@ -135,21 +135,21 @@ public struct ParsedMimeMessage: Sendable, Equatable {
     }
     
     /// Get all parts of a specific content type
-    public func parts(withContentType contentType: String) -> [MimePart] {
+    public func parts(withContentType contentType: String) -> [MIMEPart] {
         parts.filter { part in
             part.contentType?.lowercased().hasPrefix(contentType.lowercased()) ?? false
         }
     }
     
     /// Get the first part matching a content type
-    public func firstPart(withContentType contentType: String) -> MimePart? {
+    public func firstPart(withContentType contentType: String) -> MIMEPart? {
         parts.first { part in
             part.contentType?.lowercased().hasPrefix(contentType.lowercased()) ?? false
         }
     }
     
     /// Get all text parts (both plain and HTML)
-    public var textParts: [MimePart] {
+    public var textParts: [MIMEPart] {
         parts(withContentType: "text/")
     }
     
@@ -179,18 +179,18 @@ public struct ParsedMimeMessage: Sendable, Equatable {
     }
     
     /// Get all attachments
-    public var attachments: [MimePart] {
+    public var attachments: [MIMEPart] {
         parts.filter { $0.isAttachment }
     }
     
     /// Get all inline parts (e.g., embedded images)
-    public var inlineParts: [MimePart] {
+    public var inlineParts: [MIMEPart] {
         parts.filter { $0.isInline }
     }
     
     /// Get all parts grouped by content type
-    public var partsByType: [String: [MimePart]] {
-        var grouped: [String: [MimePart]] = [:]
+    public var partsByType: [String: [MIMEPart]] {
+        var grouped: [String: [MIMEPart]] = [:]
         for part in parts {
             if let mimeType = part.mimeType {
                 grouped[mimeType, default: []].append(part)
@@ -203,7 +203,7 @@ public struct ParsedMimeMessage: Sendable, Equatable {
 /// A single MIME part.
 ///
 /// Holds only decoded value types (the MimeParser wire objects are consumed at construction)
-public struct MimePart: Sendable, Equatable {
+public struct MIMEPart: Sendable, Equatable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
@@ -217,7 +217,7 @@ public struct MimePart: Sendable, Equatable {
 
     init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil, mime: Mime? = nil) {
         let headerDisposition = mime?.header.contentDisposition?.type
-        let headerTransferEncoding = MimePart.transferEncodingString(from: mime?.header.contentTransferEncoding)
+        let headerTransferEncoding = MIMEPart.transferEncodingString(from: mime?.header.contentTransferEncoding)
 
         self.headers = headers
         self.contentType = contentType ?? headers["content-type"]

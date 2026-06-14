@@ -48,7 +48,7 @@ extension Interactive {
                 )
 
                 do {
-                    if let mimeMessage = try tempSummary.parseMimeContent(from: bodyData) {
+                    if let mimeMessage = try tempSummary.parseMIMEContent(from: bodyData) {
                         print("MIME Type: \(mimeMessage.contentType ?? "text/plain")")
                         if let charset = mimeMessage.charset {
                             print("Charset: \(charset)")

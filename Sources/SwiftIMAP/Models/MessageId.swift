@@ -5,19 +5,19 @@ import Foundation
 ///
 /// Servers and clients frame the same identifier inconsistently: with or
 /// without the angle brackets, with stray whitespace, sometimes comma-separated
-/// in `References`. `MessageID` canonicalises to the bare form on parse, so two
+/// in `References`. `MessageId` canonicalises to the bare form on parse, so two
 /// identifiers that denote the same message always compare equal — threading
-/// (`a.messageID == b.inReplyTo`, `b.references.contains(a.messageID)`) is
+/// (`a.messageId == b.inReplyTo`, `b.references.contains(a.messageId)`) is
 /// correct by construction, with no bracket-stripping at the call site.
 ///
 /// Use ``bracketed`` when writing an identifier into an outgoing header.
-public struct MessageID: Hashable, Sendable {
+public struct MessageId: Hashable, Sendable {
     /// The identifier without angle brackets or surrounding whitespace,
     /// e.g. `"abc123@mail.example.com"`. This is the canonical identity used
     /// for equality and hashing.
     public let value: String
 
-    /// Parse a single header token into a `MessageID`.
+    /// Parse a single header token into a `MessageId`.
     ///
     /// Trims surrounding whitespace and strips an enclosing angle bracket on
     /// each side. Brackets are stripped independently, so a malformed
@@ -47,14 +47,14 @@ public struct MessageID: Hashable, Sendable {
     /// Exposed so callers working from raw header strings (e.g. a full-message
     /// fetch, not just an `ENVELOPE`) can normalise identically to the parsed
     /// model fields.
-    public static func parseList(_ headerValue: some StringProtocol) -> [MessageID] {
+    public static func parseList(_ headerValue: some StringProtocol) -> [MessageId] {
         headerValue
             .split { $0 == " " || $0 == "\t" || $0 == "\r" || $0 == "\n" || $0 == "," }
-            .compactMap { MessageID(parsing: $0) }
+            .compactMap { MessageId(parsing: $0) }
     }
 }
 
-extension MessageID: CustomStringConvertible {
+extension MessageId: CustomStringConvertible {
     /// The bare canonical value (no brackets), for logging.
     public var description: String { value }
 }

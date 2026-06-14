@@ -19,7 +19,7 @@ final class IMAPResponseLoggingTests: XCTestCase {
 
     func testFetchHeaderAndEnvelopeAreRedacted() {
         let header = Data("From: ceo@example.com\r\nSubject: Secret\r\n".utf8)
-        let envelope = IMAPResponse.EnvelopeData(date: nil, subject: "Secret", from: nil, sender: nil, replyTo: nil, to: nil, cc: nil, bcc: nil, inReplyTo: nil, messageID: nil, rawDate: nil, rawSubject: nil, rawInReplyTo: nil, rawMessageID: nil)
+        let envelope = IMAPResponse.EnvelopeData(date: nil, subject: "Secret", from: nil, sender: nil, replyTo: nil, to: nil, cc: nil, bcc: nil, inReplyTo: nil, messageId: nil, rawDate: nil, rawSubject: nil, rawInReplyTo: nil, rawMessageId: nil)
         let response = IMAPResponse.untagged(.fetch(1, [.header(header), .envelope(envelope)]))
 
         let logged = response.loggingDescription

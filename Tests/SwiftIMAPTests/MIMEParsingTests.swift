@@ -15,7 +15,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
         
         let summary = createTestSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.parts.count, 1)
@@ -44,7 +44,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
         
         let summary = createTestSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.parts.count, 2)
@@ -76,7 +76,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
         
         let summary = createTestSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.parts.count, 2)
@@ -123,7 +123,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
         
         let summary = createTestSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         
         XCTAssertNotNil(parsed)
         // Should have 3 parts total: 2 from inner multipart + 1 attachment
@@ -157,7 +157,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
         
         let summary = createTestSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.parts.count, 2)
@@ -200,7 +200,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
         
         let summary = createTestSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         
         XCTAssertNotNil(parsed)
         let partsByType = parsed?.partsByType ?? [:]
@@ -225,7 +225,7 @@ final class MIMEParsingTests: XCTestCase {
         """.data(using: .utf8)!
 
         // No stub instance required.
-        let parsed = try MessageSummary.parseMimeContent(from: messageData)
+        let parsed = try MessageSummary.parseMIMEContent(from: messageData)
 
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.plainTextContent, "Parsed without a MessageSummary instance.")
@@ -240,8 +240,8 @@ final class MIMEParsingTests: XCTestCase {
         Body.
         """.data(using: .utf8)!
 
-        let viaInstance = try createTestSummary().parseMimeContent(from: messageData)
-        let viaStatic = try MessageSummary.parseMimeContent(from: messageData)
+        let viaInstance = try createTestSummary().parseMIMEContent(from: messageData)
+        let viaStatic = try MessageSummary.parseMIMEContent(from: messageData)
 
         XCTAssertEqual(viaInstance?.plainTextContent, viaStatic?.plainTextContent)
         XCTAssertEqual(viaInstance?.parts.count, viaStatic?.parts.count)
@@ -249,7 +249,7 @@ final class MIMEParsingTests: XCTestCase {
 
     func testStaticParseMimeContentThrowsOnInvalidUTF8() {
         let invalid = Data([0xFF, 0xFE, 0xFD])
-        XCTAssertThrowsError(try MessageSummary.parseMimeContent(from: invalid))
+        XCTAssertThrowsError(try MessageSummary.parseMIMEContent(from: invalid))
     }
 
     /// The decodedText raw fallback: when the transfer encoding cannot be
@@ -257,7 +257,7 @@ final class MIMEParsingTests: XCTestCase {
     /// decodedData is nil. Pins the only reason rawBody is retained.
     func testUndecodableTransferEncodingFallsBackToRawText() throws {
         let raw = "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: x-custom\r\n\r\nraw payload text"
-        let parsed = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+        let parsed = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(raw.utf8)))
         let part = try XCTUnwrap(parsed.parts.first)
 
         XCTAssertNil(part.decodedData, "Unknown transfer encoding should fail to decode")
@@ -265,54 +265,54 @@ final class MIMEParsingTests: XCTestCase {
                        "decodedText must fall back to the raw body when decoding fails")
     }
 
-    /// Compile-time guarantee that ParsedMimeMessage and MimePart are
+    /// Compile-time guarantee that ParsedMIMEMessage and MIMEPart are
     /// Sendable, so parsed results can cross actor/task boundaries. This test
     /// fails to compile (under strict concurrency it errors) if the conformance
     /// is removed or invalidated by a non-Sendable stored property.
-    func testParsedMimeMessageCrossesActorBoundary() async throws {
+    func testParsedMIMEMessageCrossesActorBoundary() async throws {
         let raw = "Content-Type: text/plain; charset=utf-8\r\n\r\nHello across actors"
-        let parsed = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+        let parsed = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(raw.utf8)))
 
         let text = await Task.detached { parsed.plainTextContent }.value
         XCTAssertEqual(text, "Hello across actors")
 
-        let parts: [MimePart] = parsed.parts
+        let parts: [MIMEPart] = parsed.parts
         let decoded = await Task.detached { parts.compactMap(\.decodedText) }.value
         XCTAssertEqual(decoded, ["Hello across actors"])
     }
 
-    /// ParsedMimeMessage and MimePart are Equatable: parsing identical bytes
+    /// ParsedMIMEMessage and MIMEPart are Equatable: parsing identical bytes
     /// twice yields equal values; differing bodies are unequal.
-    func testParsedMimeMessageEquatableConformance() throws {
+    func testParsedMIMEMessageEquatableConformance() throws {
         let raw = "Content-Type: text/plain; charset=utf-8\r\n\r\nbody one"
-        let first = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
-        let second = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(raw.utf8)))
+        let first = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(raw.utf8)))
+        let second = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(raw.utf8)))
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.parts, second.parts)
 
         let other = raw.replacingOccurrences(of: "body one", with: "body two")
-        let differing = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(other.utf8)))
+        let differing = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(other.utf8)))
         XCTAssertNotEqual(first, differing)
     }
 
-    /// Equality on the MimePart decode-failure branch (where rawBody is
+    /// Equality on the MIMEPart decode-failure branch (where rawBody is
     /// populated, not the decoded-success branch). Two parts that both fail to
     /// decode with the same raw body compare equal; a decoded part and a
     /// failed-decode part with the same bytes compare unequal (they differ in
     /// decodedData: one has bytes, the other is nil).
-    func testMimePartEqualityOnDecodeFailureBranch() throws {
+    func testMIMEPartEqualityOnDecodeFailureBranch() throws {
         // An unknown transfer encoding makes decodedContentData() throw, so
         // decodedData == nil and rawBody is retained.
         let undecodable = "Content-Type: text/plain\r\nContent-Transfer-Encoding: x-custom\r\n\r\nsame body"
-        let p1 = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(undecodable.utf8))).parts.first
-        let p2 = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(undecodable.utf8))).parts.first
+        let p1 = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(undecodable.utf8))).parts.first
+        let p2 = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(undecodable.utf8))).parts.first
         XCTAssertEqual(p1, p2, "Two equal failed-decode parts must compare equal")
         XCTAssertNil(p1?.decodedData)
 
         // A decodable part with the same body text decodes to bytes, so its
         // decodedData differs from the failed part's nil — they are unequal.
         let decodable = "Content-Type: text/plain\r\n\r\nsame body"
-        let p3 = try XCTUnwrap(MessageSummary.parseMimeContent(from: Data(decodable.utf8))).parts.first
+        let p3 = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(decodable.utf8))).parts.first
         XCTAssertNotNil(p3?.decodedData)
         XCTAssertNotEqual(p1, p3, "A failed-decode part and a decoded part must compare unequal")
     }

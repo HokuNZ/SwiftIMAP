@@ -3,8 +3,8 @@ import XCTest
 
 final class ModelTests: XCTestCase {
 
-    /// Build a MessageID from a known-good bare value (test convenience).
-    private func mid(_ value: String) -> MessageID { MessageID(parsing: value)! }
+    /// Build a MessageId from a known-good bare value (test convenience).
+    private func mid(_ value: String) -> MessageId { MessageId(parsing: value)! }
     
     func testMailboxCreation() {
         let mailbox = Mailbox(
@@ -94,7 +94,7 @@ final class ModelTests: XCTestCase {
             cc: [],
             bcc: [],
             inReplyTo: nil,
-            messageID: mid("12345@example.com")
+            messageId: mid("12345@example.com")
         )
         
         let summary = MessageSummary(
@@ -152,48 +152,48 @@ final class ModelTests: XCTestCase {
         XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
     }
 
-    /// MessageID canonicalises to the bare form, so bracketed and bare framings
+    /// MessageId canonicalises to the bare form, so bracketed and bare framings
     /// of the same identifier compare equal — the property that makes threading
     /// comparisons bracket-safe.
-    func testMessageIDNormalisationAndEquality() {
-        XCTAssertEqual(MessageID(parsing: "<a@x.com>"), mid("a@x.com"))
-        XCTAssertEqual(MessageID(parsing: "  <a@x.com> "), MessageID(parsing: "a@x.com"))
-        XCTAssertEqual(MessageID(parsing: "<a@x.com>")?.value, "a@x.com")
+    func testMessageIdNormalisationAndEquality() {
+        XCTAssertEqual(MessageId(parsing: "<a@x.com>"), mid("a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "  <a@x.com> "), MessageId(parsing: "a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "<a@x.com>")?.value, "a@x.com")
         XCTAssertEqual(mid("a@x.com").bracketed, "<a@x.com>")
-        XCTAssertNil(MessageID(parsing: "   "))
-        XCTAssertNil(MessageID(parsing: "<>"))
+        XCTAssertNil(MessageId(parsing: "   "))
+        XCTAssertNil(MessageId(parsing: "<>"))
 
         // Malformed half-bracketed tokens still canonicalise to the bare id
         // (brackets stripped independently), so threading still matches.
-        XCTAssertEqual(MessageID(parsing: "<a@x.com"), mid("a@x.com"))
-        XCTAssertEqual(MessageID(parsing: "a@x.com>"), mid("a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "<a@x.com"), mid("a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "a@x.com>"), mid("a@x.com"))
         // A lone bracket has no identity and is dropped.
-        XCTAssertNil(MessageID(parsing: "<"))
-        XCTAssertNil(MessageID(parsing: ">"))
+        XCTAssertNil(MessageId(parsing: "<"))
+        XCTAssertNil(MessageId(parsing: ">"))
     }
 
-    /// MessageID.parseList tokenises a raw References header into ordered,
+    /// MessageId.parseList tokenises a raw References header into ordered,
     /// normalised identifiers, accepting space or comma separators and dropping
     /// empty tokens.
-    func testMessageIDParseList() {
-        XCTAssertEqual(MessageID.parseList("<a@x.com> <b@y.com>"),
+    func testMessageIdParseList() {
+        XCTAssertEqual(MessageId.parseList("<a@x.com> <b@y.com>"),
                        [mid("a@x.com"), mid("b@y.com")])
-        XCTAssertEqual(MessageID.parseList("<a@x.com>,<b@y.com>"),
+        XCTAssertEqual(MessageId.parseList("<a@x.com>,<b@y.com>"),
                        [mid("a@x.com"), mid("b@y.com")])
-        XCTAssertEqual(MessageID.parseList("  <only@x.com>  "), [mid("only@x.com")])
-        XCTAssertEqual(MessageID.parseList("bare@x.com"), [mid("bare@x.com")])
-        XCTAssertEqual(MessageID.parseList("   "), [])
+        XCTAssertEqual(MessageId.parseList("  <only@x.com>  "), [mid("only@x.com")])
+        XCTAssertEqual(MessageId.parseList("bare@x.com"), [mid("bare@x.com")])
+        XCTAssertEqual(MessageId.parseList("   "), [])
         // Empty/garbage tokens between valid ones are dropped; order is preserved.
-        XCTAssertEqual(MessageID.parseList("<a@x.com> <> <b@x.com>"),
+        XCTAssertEqual(MessageId.parseList("<a@x.com> <> <b@x.com>"),
                        [mid("a@x.com"), mid("b@x.com")])
     }
 
     /// Threading is bracket-safe by construction: a reply's inReplyTo and the
-    /// parent's messageID compare equal regardless of how each was framed.
+    /// parent's messageId compare equal regardless of how each was framed.
     func testThreadingComparisonIsBracketSafe() {
-        let parentID = MessageID(parsing: "<parent@x.com>")!          // from ENVELOPE (bracketed)
-        let reply = Envelope(inReplyTo: MessageID(parsing: "parent@x.com"),  // however framed
-                             messageID: mid("child@x.com"))
+        let parentID = MessageId(parsing: "<parent@x.com>")!          // from ENVELOPE (bracketed)
+        let reply = Envelope(inReplyTo: MessageId(parsing: "parent@x.com"),  // however framed
+                             messageId: mid("child@x.com"))
         XCTAssertEqual(reply.inReplyTo, parentID)
         XCTAssertTrue([parentID].contains(reply.inReplyTo!))
     }

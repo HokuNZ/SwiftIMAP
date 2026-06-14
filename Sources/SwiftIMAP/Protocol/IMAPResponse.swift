@@ -81,11 +81,11 @@ public enum IMAPResponse: Sendable, Equatable {
         public let cc: [AddressData]?
         public let bcc: [AddressData]?
         public let inReplyTo: String?
-        public let messageID: String?
+        public let messageId: String?
         public let rawDate: Data?
         public let rawSubject: Data?
         public let rawInReplyTo: Data?
-        public let rawMessageID: Data?
+        public let rawMessageId: Data?
     }
     
     public struct AddressData: Sendable, Equatable {
