@@ -30,8 +30,13 @@ actor ConnectCoordinator {
         }
         let task = Task { try await work() }
         inFlight = task
-        defer { inFlight = nil }
-        try await task.value
+        // Clear `inFlight` only once the shared task has actually finished. Await
+        // its `result` (non-throwing) rather than `value`, so the slot is never
+        // cleared by a waiter's own cancellation while the attempt is still
+        // running — which would let a later call start a second concurrent connect.
+        let result = await task.result
+        inFlight = nil
+        try result.get()
     }
 }
 
