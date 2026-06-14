@@ -41,6 +41,10 @@ extension MessageSummary {
     /// the current time if it is missing or unparseable. `size` is the byte
     /// length of `data`.
     ///
+    /// Treat a parsed summary as read-only metadata: its `uid` is a placeholder
+    /// (`0` is not a valid IMAP UID), so do not pass it back into UID-based
+    /// operations such as `fetchMessage(uid:)` or `storeFlags(uid:)`.
+    ///
     /// Throws `IMAPError.parsingError` if the bytes are not valid UTF-8 or the
     /// MIME structure cannot be parsed.
     public static func parse(rfc822 data: Data) throws -> MessageSummary {

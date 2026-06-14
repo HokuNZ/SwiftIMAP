@@ -337,6 +337,39 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// And delete: a mismatch throws after the UIDPLUS guard, before any STORE
+    /// or UID EXPUNGE reaches the server.
+    func testDeleteWithMismatchedUIDValidityThrowsBeforeSending() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN UIDPLUS")
+        mockServer.setResponse(for: "SELECT", response: "* OK [UIDVALIDITY 999]")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        do {
+            try await client.deleteMessages(uids: [3, 5], in: "INBOX", expectedUIDValidity: 12345)
+            XCTFail("Expected uidValidityChanged")
+        } catch IMAPError.uidValidityChanged { /* expected */ }
+
+        let sent = mockServer.receivedCommands.map { $0.uppercased() }
+        XCTAssertFalse(sent.contains { $0.contains("UID STORE") }, "No STORE may be sent on validity mismatch")
+        XCTAssertFalse(sent.contains { $0.contains("UID EXPUNGE") }, "No UID EXPUNGE may be sent on validity mismatch")
+        await client.disconnect()
+    }
+
+    /// deleteMessages selects the mailbox once for both the STORE and the UID
+    /// EXPUNGE, rather than re-selecting per step.
+    func testDeleteSelectsMailboxOnce() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN UIDPLUS")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        try await client.deleteMessages(uids: [3, 5], in: "INBOX")
+
+        let selects = mockServer.receivedCommands.filter { $0.uppercased().contains("SELECT") }
+        XCTAssertEqual(selects.count, 1, "deleteMessages should SELECT once, got: \(selects)")
+        await client.disconnect()
+    }
+
     /// The default (no expectedUIDValidity) is behaviour-identical: a write
     /// proceeds regardless of the server's validity value.
     func testWriteWithoutExpectedValidityIgnoresValidity() async throws {
