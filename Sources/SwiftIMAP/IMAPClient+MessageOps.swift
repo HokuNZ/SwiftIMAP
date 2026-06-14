@@ -178,8 +178,14 @@ extension IMAPClient {
         )
     }
 
-    /// Move a message to another mailbox (if server supports MOVE extension)
-    /// Falls back to COPY + mark as deleted if MOVE is not supported
+    /// Move a message to another mailbox.
+    ///
+    /// On servers that advertise the MOVE extension this issues `UID MOVE`. On
+    /// servers without it, the fallback is COPY-then-mark-`\Deleted`: **the source
+    /// message is copied and flagged `\Deleted` but not removed** — it stays in
+    /// the source mailbox until an expunge runs (e.g. `expunge(mailbox:)`, or the
+    /// server's auto-expunge on close). On those servers a "move" is not a full
+    /// removal; expunge the source yourself if removal is required.
     ///
     /// - Parameter expectedUIDValidity: when non-nil, refuses with
     ///   `IMAPError.uidValidityChanged` if the source mailbox's `UIDVALIDITY`
@@ -201,7 +207,11 @@ extension IMAPClient {
         }
     }
 
-    /// Move multiple messages to another mailbox
+    /// Move multiple messages to another mailbox.
+    ///
+    /// As with `moveMessage`, servers without the MOVE extension get the
+    /// COPY-then-mark-`\Deleted` fallback, which leaves the source messages in
+    /// place (flagged `\Deleted`) until an expunge runs.
     public func moveMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         guard !uids.isEmpty else { return }
 
