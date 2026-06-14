@@ -247,9 +247,18 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertEqual(viaInstance?.parts.count, viaStatic?.parts.count)
     }
 
-    func testStaticParseMimeContentThrowsOnInvalidUTF8() {
-        let invalid = Data([0xFF, 0xFE, 0xFD])
-        XCTAssertThrowsError(try MessageSummary.parseMIMEContent(from: invalid))
+    /// A body that is not valid UTF-8 is decoded via the ISO-8859-1 fallback
+    /// rather than throwing at the decode step (#70).
+    func testParseMimeContentDecodesNonUTF8BodyViaLatin1() throws {
+        var bytes = Data("Content-Type: text/plain; charset=iso-8859-1\r\n\r\n".utf8)
+        bytes.append(0xA3)  // £ in ISO-8859-1, invalid as a standalone UTF-8 byte
+        bytes.append(contentsOf: Data(" price".utf8))
+
+        let parsed = try XCTUnwrap(MessageSummary.parseMIMEContent(from: bytes))
+        XCTAssertEqual(parsed.contentType, "text/plain")
+        XCTAssertEqual(parsed.charset, "iso-8859-1")
+        XCTAssertFalse(parsed.parts.isEmpty, "Body should parse via the Latin-1 fallback")
+        XCTAssertEqual(parsed.parts.first?.decodedText, "£ price")
     }
 
     /// The decodedText raw fallback: when the transfer encoding cannot be
