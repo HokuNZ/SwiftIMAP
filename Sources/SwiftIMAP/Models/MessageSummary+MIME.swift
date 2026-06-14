@@ -59,7 +59,9 @@ extension MessageSummary {
             uid: 0,
             sequenceNumber: 0,
             internalDate: envelope.date ?? Date(),
-            size: UInt32(data.count),
+            // size is informational; saturate rather than trap on a message
+            // larger than UInt32.max (~4 GB).
+            size: UInt32(clamping: data.count),
             envelope: envelope,
             references: references
         )

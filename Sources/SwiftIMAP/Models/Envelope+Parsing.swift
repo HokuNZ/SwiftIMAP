@@ -12,9 +12,10 @@ extension Envelope {
     /// common RFC 2822 formats (see ``RFC2822/parseDate(_:)``). A missing or
     /// unparseable header yields an empty/`nil` field rather than an error.
     ///
-    /// `References` is not part of `Envelope`; read it from the header dict with
-    /// `MessageId.parseList(headers["References"] ?? "")`, or use
-    /// ``MessageSummary/parse(rfc822:)`` which populates it.
+    /// `References` is not part of `Envelope`; populate it yourself by passing
+    /// the `References` header value (under whatever key your dict uses) to
+    /// `MessageId.parseList(_:)`, or use ``MessageSummary/parse(rfc822:)`` which
+    /// reads it for you.
     public init(parsingHeaders headers: [String: String]) {
         // Match header names case-insensitively (RFC 5322 §1.2.2 field names are
         // case-insensitive, and a raw dict may key them however the source did).
