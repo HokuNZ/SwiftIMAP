@@ -1,5 +1,11 @@
 # Error handling investigation
 
+> **Historical / internal record.** A point-in-time investigation from v2.0
+> development, kept for the audit trail. It describes the pre-fix state and uses
+> the names as they were then; it is **not** current API guidance — see
+> `README.md` and `docs/migration-v1-to-v2.md`. (Scheduled for removal at the
+> v2.0 tag.)
+
 Investigation prompted by **MailTriage #226** ("enrich IMAPService move/copy errors with folder, UID, and server response"). MailTriage wants to attach the IMAP **server response line** (the `NO`/`BAD` status plus its text and response code) to its Bugsnag metadata. This document records what SwiftIMAP currently exposes, the gaps, and the API change required.
 
 ## TL;DR

@@ -219,8 +219,10 @@ let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("P
 
 All operations throw `IMAPError`. When the server rejects a command, `commandFailed`
 carries a structured `IMAPServerResponse` so you can log a faithful server response
-line and distinguish causes. None of the error output includes credentials or message
-data.
+line and distinguish causes. SwiftIMAP never puts command arguments, credentials, or
+message bodies into error output. Note that `IMAPServerResponse.line` includes the
+server's own response text, which some servers echo user-specific details into (e.g. a
+mailbox name); treat it as potentially sensitive before exporting to third parties.
 
 ```swift
 do {

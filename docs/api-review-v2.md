@@ -1,5 +1,10 @@
 # SwiftIMAP v2.0 external API review
 
+> **Historical / internal record.** A point-in-time review snapshot from v2.0
+> development, kept for the audit trail. It uses the names and findings as they
+> were at review time and is **not** current API guidance — see `README.md` and
+> `docs/migration-v1-to-v2.md` for that. (Scheduled for removal at the v2.0 tag.)
+
 Date: 2026-06-06. Branch under review: `version/v2.0` (post-#27 error-handling work).
 
 ## Brief
