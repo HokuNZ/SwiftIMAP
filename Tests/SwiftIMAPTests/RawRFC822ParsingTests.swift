@@ -213,13 +213,66 @@ final class RawRFC822ParsingTests: XCTestCase {
         XCTAssertLessThanOrEqual(summary.internalDate, after)
     }
 
-    func testParseRFC822RejectsInvalidUTF8() {
-        // A lone 0xFF byte is not valid UTF-8.
-        let data = Data([0xFF, 0xFE, 0x00])
+    /// Non-message input (no parseable headers at all) throws.
+    func testParseRFC822ThrowsWhenNoHeaders() {
+        let data = Data([0xFF, 0xFE, 0x00])  // not UTF-8, no colon-delimited header lines
         XCTAssertThrowsError(try MessageSummary.parse(rfc822: data)) { error in
             guard case IMAPError.parsingError = error else {
                 return XCTFail("Expected IMAPError.parsingError, got \(error)")
             }
         }
+    }
+
+    /// The envelope survives a body that is not valid UTF-8: header parsing is
+    /// decoupled from the body, with an ISO-8859-1 fallback for decoding (#67).
+    func testParseRFC822RecoversEnvelopeFromNonUTF8Body() throws {
+        var bytes = Data("""
+        From: Alice <alice@example.com>
+        Subject: Plain subject
+        Date: Tue, 05 Oct 2021 11:03:08 -0400
+
+        """.replacingOccurrences(of: "\n", with: "\r\n").utf8)
+        bytes.append(0xFF)  // invalid as UTF-8, forces the Latin-1 fallback
+        bytes.append(contentsOf: Data("\r\nbody".utf8))
+
+        let summary = try MessageSummary.parse(rfc822: bytes)
+        XCTAssertEqual(summary.envelope?.from, [Address(name: "Alice", mailbox: "alice", host: "example.com")])
+        XCTAssertEqual(summary.envelope?.subject, "Plain subject")
+        XCTAssertEqual(summary.envelope?.date, Date(timeIntervalSince1970: 1_633_446_188))
+    }
+
+    /// A leading mbox `From ` envelope line (RFC 4155, emitted by archive
+    /// converters) is stripped before header parsing (#67).
+    func testParseRFC822StripsMboxPreamble() throws {
+        let raw = """
+        From archive@example.com Mon Jan  1 00:00:00 2024
+        From: Bob <bob@example.org>
+        Subject: Archived
+
+        body
+        """.replacingOccurrences(of: "\n", with: "\r\n")
+
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.envelope?.from, [Address(name: "Bob", mailbox: "bob", host: "example.org")])
+        XCTAssertEqual(summary.envelope?.subject, "Archived")
+    }
+
+    /// Folded header lines (RFC 5322 §2.2.3) are unfolded before parsing.
+    func testParseRFC822UnfoldsHeaders() throws {
+        let raw = """
+        From: Alice <alice@example.com>
+        References: <a@x.com>
+        \t<b@x.com> <c@x.com>
+        Subject: Folded
+
+        body
+        """.replacingOccurrences(of: "\n", with: "\r\n")
+
+        let summary = try MessageSummary.parse(rfc822: Data(raw.utf8))
+        XCTAssertEqual(summary.references, [
+            MessageId(parsing: "a@x.com"),
+            MessageId(parsing: "b@x.com"),
+            MessageId(parsing: "c@x.com")
+        ])
     }
 }

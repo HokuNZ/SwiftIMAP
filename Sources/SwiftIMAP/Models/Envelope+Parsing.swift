@@ -43,6 +43,58 @@ extension Envelope {
 /// Internal RFC 2822 header-value parsing for the raw-bytes path
 /// (``Envelope/init(parsingHeaders:)`` / ``MessageSummary/parse(rfc822:)``).
 enum RFC2822 {
+    /// Parse the RFC 5322 header block of a raw message into a `[name: value]`
+    /// dictionary with lower-cased field names — independent of the MIME body.
+    ///
+    /// Tolerant of real-world archive input:
+    /// - decodes as UTF-8 with an ISO-8859-1 fallback, so non-UTF-8 bytes (almost
+    ///   always in the body) do not defeat header parsing;
+    /// - strips a leading mbox `From ` envelope line (RFC 4155), which archive
+    ///   converters emit and which is not an RFC 5322 header;
+    /// - unfolds folded header lines (RFC 5322 §2.2.3);
+    /// - keeps the first occurrence of a repeated field name.
+    static func parseHeaderFields(from data: Data) -> [String: String] {
+        // Headers are 7-bit per RFC 5322, but real messages carry ISO-8859-1 (or
+        // RFC 2047 encoded-words). Latin-1 maps every byte losslessly, so it is a
+        // safe fallback when the bytes are not valid UTF-8.
+        let text = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .isoLatin1)
+            ?? ""
+
+        var normalised = text.replacingOccurrences(of: "\r\n", with: "\n")
+
+        if normalised.hasPrefix("From ") {
+            if let newline = normalised.firstIndex(of: "\n") {
+                normalised = String(normalised[normalised.index(after: newline)...])
+            } else {
+                normalised = ""
+            }
+        }
+
+        // The header block ends at the first blank line.
+        let headerBlock = normalised.range(of: "\n\n").map { normalised[..<$0.lowerBound] }
+            ?? normalised[...]
+
+        var headers: [String: String] = [:]
+        var logical = ""
+        func commit(_ line: String) {
+            guard let colon = line.firstIndex(of: ":") else { return }
+            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            guard !name.isEmpty, headers[name] == nil else { return }
+            headers[name] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+        }
+        for line in headerBlock.split(separator: "\n", omittingEmptySubsequences: false) {
+            if let first = line.first, first == " " || first == "\t" {
+                logical += " " + line.trimmingCharacters(in: .whitespaces)   // unfold
+            } else {
+                if !logical.isEmpty { commit(logical) }
+                logical = String(line)
+            }
+        }
+        if !logical.isEmpty { commit(logical) }
+        return headers
+    }
+
     /// RFC 2822 date formats, tried in order. Mirrors the set a real-world mail
     /// client must handle: with and without the leading weekday, and 24-hour
     /// and AM/PM clocks. `en_US_POSIX` keeps month/weekday/AM-PM parsing locale

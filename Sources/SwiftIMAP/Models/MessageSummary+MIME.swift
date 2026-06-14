@@ -36,6 +36,13 @@ extension MessageSummary {
     /// ``Envelope/init(parsingHeaders:)``) and populates `references` from the
     /// `References` header.
     ///
+    /// Header parsing is independent of the MIME body: `MessageSummary` carries
+    /// no body-derived fields, so a body that the MIME parser cannot handle (an
+    /// unusual multipart, non-UTF-8 content) does not lose the recoverable
+    /// envelope. The bytes are decoded as UTF-8 with an ISO-8859-1 fallback, and
+    /// a leading mbox `From ` envelope line (emitted by archive converters) is
+    /// stripped before parsing.
+    ///
     /// The `uid` and `sequenceNumber` are synthesised as `0` — there is no IMAP
     /// session to assign them. `internalDate` comes from the `Date` header, or
     /// the current time if it is missing or unparseable. `size` is the byte
@@ -45,19 +52,20 @@ extension MessageSummary {
     /// (`0` is not a valid IMAP UID), so do not pass it back into UID-based
     /// operations such as `fetchMessage(uid:in:)` or `storeFlags(uid:in:)`.
     ///
-    /// Throws `IMAPError.parsingError` if the bytes are not valid UTF-8 or the
-    /// MIME structure cannot be parsed.
+    /// Throws `IMAPError.parsingError` only if no RFC 822 headers can be found at
+    /// all (e.g. empty or non-message input).
     public static func parse(rfc822 data: Data) throws -> MessageSummary {
-        // parseMIMEContent throws on bad input rather than returning nil; the
-        // guard is defensive against the optional return type.
-        guard let parsed = try parseMIMEContent(from: data) else {
-            throw IMAPError.parsingError("Could not parse RFC822 message")
+        // Parse headers independently of the MIME body so a body the MIME parser
+        // chokes on (unusual multipart, non-UTF-8 bytes) does not lose the
+        // envelope. MessageSummary has no body-derived fields, so this is all it
+        // needs.
+        let headers = RFC2822.parseHeaderFields(from: data)
+        guard !headers.isEmpty else {
+            throw IMAPError.parsingError("No RFC 822 headers found")
         }
 
-        let envelope = Envelope(parsingHeaders: parsed.headers)
-        // ParsedMIMEMessage stores header names lower-cased, so look up the
-        // lower-cased key directly.
-        let references = MessageId.parseList(parsed.headers["references"] ?? "")
+        let envelope = Envelope(parsingHeaders: headers)
+        let references = MessageId.parseList(headers["references"] ?? "")
 
         return MessageSummary(
             uid: 0,
