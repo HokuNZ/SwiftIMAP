@@ -219,10 +219,13 @@ let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("P
 
 All operations throw `IMAPError`. When the server rejects a command, `commandFailed`
 carries a structured `IMAPServerResponse` so you can log a faithful server response
-line and distinguish causes. SwiftIMAP never puts command arguments, credentials, or
-message bodies into error output. Note that `IMAPServerResponse.line` includes the
-server's own response text, which some servers echo user-specific details into (e.g. a
-mailbox name); treat it as potentially sensitive before exporting to third parties.
+line and distinguish causes. SwiftIMAP never puts your command arguments, credentials,
+or message bodies into error output. Two caveats on server-supplied text: a
+`commandFailed`/`connectionClosed` response `line` includes the server's own text,
+which some servers echo user-specific details into (e.g. a mailbox name); and a
+`parsingError` embeds a truncated slice of the offending server input for diagnostics,
+which can include message content. Treat both as potentially sensitive before exporting
+to third parties.
 
 ```swift
 do {
@@ -232,7 +235,8 @@ do {
     case .commandFailed(let response):
         // response.status  -> .no / .bad
         // response.code    -> e.g. .tryCreate, .other("OVERQUOTA", nil)
-        // response.line    -> "NO [TRYCREATE] Mailbox does not exist" (safe to log)
+        // response.line    -> "NO [TRYCREATE] Mailbox does not exist"
+        //                     (server text — may echo user details like a mailbox name)
         log.error("\(response.commandName) failed: \(response.line)")
         if response.isMailboxNotFound { /* destination renamed or removed */ }
         if response.isOverQuota { /* account over quota */ }
