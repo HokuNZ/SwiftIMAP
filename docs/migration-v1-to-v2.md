@@ -195,10 +195,10 @@ These are not required changes, but 2.0 lets you remove workarounds:
   parallel parser, so the raw-bytes path maps through the same code as a live
   `FETCH`.
   - Note one difference between the two paths: a live `ENVELOPE` preserves
-    address groups in the `*Entries` arrays (e.g. `toEntries`), whereas the
-    raw-header path (`Envelope(parsingHeaders:)`) flattens a group to its
-    member addresses. If you read `*Entries` and care about group structure,
-    it is only populated on the `FETCH` path.
+    address-group structure in the `*Entries` arrays (e.g. `toEntries`), whereas
+    the raw-header path (`Envelope(parsingHeaders:)`) flattens a group to its
+    member addresses. Both paths populate `*Entries`; only the `FETCH`/`ENVELOPE`
+    path emits `.group` entries — the raw-header path emits only `.mailbox`.
 
 ## Naming standardisation
 

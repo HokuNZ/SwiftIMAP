@@ -43,7 +43,7 @@ extension MessageSummary {
     ///
     /// Treat a parsed summary as read-only metadata: its `uid` is a placeholder
     /// (`0` is not a valid IMAP UID), so do not pass it back into UID-based
-    /// operations such as `fetchMessage(uid:)` or `storeFlags(uid:)`.
+    /// operations such as `fetchMessage(uid:in:)` or `storeFlags(uid:in:)`.
     ///
     /// Throws `IMAPError.parsingError` if the bytes are not valid UTF-8 or the
     /// MIME structure cannot be parsed.
