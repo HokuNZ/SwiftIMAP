@@ -66,7 +66,7 @@ extension IMAPClient {
                 // reduced item set; UID also maps each response back to its
                 // requested UID (responses may arrive in any order, and a UID may
                 // be absent if the message was deleted between search and fetch).
-                let items = self.summaryFetchItems(fetchItems)
+                let items = IMAPClient.summaryFetchItems(fetchItems)
 
                 let responses = try await self.connection.sendCommand(
                     .uid(.fetch(sequence: .set(uidsToFetch), items: items))
