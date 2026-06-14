@@ -1,6 +1,30 @@
 import Foundation
 
 extension IMAPClient {
+    /// Ensure the fetch items include the attributes a `MessageSummary` requires
+    /// — UID, internal date, and size — adding any that are absent.
+    ///
+    /// `MessageSummary` always carries this core metadata, so a caller passing a
+    /// reduced item set still gets a complete summary rather than a parse failure.
+    /// UID is also needed to map each response back to its request when fetches
+    /// are pipelined. Items are prepended so the caller's order is otherwise kept.
+    func summaryFetchItems(_ items: [IMAPCommand.FetchItem]) -> [IMAPCommand.FetchItem] {
+        var result = items
+        func isMissing(_ test: (IMAPCommand.FetchItem) -> Bool) -> Bool {
+            !result.contains(where: test)
+        }
+        if isMissing({ if case .rfc822Size = $0 { return true }; return false }) {
+            result.insert(.rfc822Size, at: 0)
+        }
+        if isMissing({ if case .internalDate = $0 { return true }; return false }) {
+            result.insert(.internalDate, at: 0)
+        }
+        if isMissing({ if case .uid = $0 { return true }; return false }) {
+            result.insert(.uid, at: 0)
+        }
+        return result
+    }
+
     /// Returns message UIDs matching the search criteria.
     ///
     /// This method uses `UID SEARCH` which returns stable UIDs that persist even when
@@ -75,17 +99,10 @@ extension IMAPClient {
             work: {
                 _ = try await self.selectMailbox(mailbox)
 
-                // Ensure UID is included in fetch items so we can verify the response.
-                // Without the UID in the response, we cannot confirm we received the
-                // correct message when concurrent fetches are in flight.
-                let hasUID = items.contains { item in
-                    if case .uid = item { return true }
-                    return false
-                }
-                var fetchItems = items
-                if !hasUID {
-                    fetchItems.insert(.uid, at: 0)
-                }
+                // Ensure the summary's required attributes (UID, internal date,
+                // size) are fetched even from a reduced item set; UID also maps
+                // each response back to its request when fetches are pipelined.
+                let fetchItems = self.summaryFetchItems(items)
 
                 let responses = try await self.connection.sendCommand(
                     .uid(.fetch(sequence: .single(uid), items: fetchItems))
