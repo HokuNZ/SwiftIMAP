@@ -262,11 +262,46 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
 
         let fetch = mockServer.receivedCommands.first { $0.uppercased().contains("UID FETCH") } ?? ""
         let upper = fetch.uppercased()
-        XCTAssertTrue(upper.contains("UID"), "auto-added UID: \(fetch)")
+        // Assert UID is in the fetch item list (inside the parens), not just the
+        // "UID FETCH" verb — `contains("UID")` would pass on the verb alone.
+        XCTAssertTrue(upper.contains("(UID"), "auto-added UID in item list: \(fetch)")
         XCTAssertTrue(upper.contains("INTERNALDATE"), "auto-added INTERNALDATE: \(fetch)")
         XCTAssertTrue(upper.contains("RFC822.SIZE"), "auto-added RFC822.SIZE: \(fetch)")
 
         await client.disconnect()
+    }
+
+    /// `summaryFetchItems` adds the missing required attributes, never duplicates
+    /// present ones, and treats the ALL/FAST/FULL macros as already covering
+    /// INTERNALDATE/RFC822.SIZE (adding only UID, which no macro includes).
+    func testSummaryFetchItemsAddsMissingWithoutDuplicating() {
+        func count(_ items: [IMAPCommand.FetchItem], _ test: (IMAPCommand.FetchItem) -> Bool) -> Int {
+            items.filter(test).count
+        }
+        let isUID: (IMAPCommand.FetchItem) -> Bool = { if case .uid = $0 { return true }; return false }
+        let isDate: (IMAPCommand.FetchItem) -> Bool = { if case .internalDate = $0 { return true }; return false }
+        let isSize: (IMAPCommand.FetchItem) -> Bool = { if case .rfc822Size = $0 { return true }; return false }
+
+        // Reduced set: all three required attributes are added.
+        let fromFlags = IMAPClient.summaryFetchItems([.flags])
+        XCTAssertEqual(count(fromFlags, isUID), 1)
+        XCTAssertEqual(count(fromFlags, isDate), 1)
+        XCTAssertEqual(count(fromFlags, isSize), 1)
+
+        // Partial set: items already present are not duplicated.
+        let fromUIDFlags = IMAPClient.summaryFetchItems([.uid, .flags])
+        XCTAssertEqual(count(fromUIDFlags, isUID), 1, "UID must not be duplicated")
+        XCTAssertEqual(count(fromUIDFlags, isDate), 1)
+        XCTAssertEqual(count(fromUIDFlags, isSize), 1)
+
+        // Macro covers date/size; only UID is added (no redundant explicit items).
+        let fromAll = IMAPClient.summaryFetchItems([.all])
+        XCTAssertEqual(count(fromAll, isUID), 1)
+        XCTAssertEqual(count(fromAll, isDate), 0, "ALL already covers INTERNALDATE")
+        XCTAssertEqual(count(fromAll, isSize), 0, "ALL already covers RFC822.SIZE")
+
+        // Complete set is unchanged.
+        XCTAssertEqual(IMAPClient.summaryFetchItems([.uid, .internalDate, .rfc822Size, .flags]).count, 4)
     }
 
     func testFetchMessageWithoutCustomKeywordsHasEmptyKeywords() async throws {

@@ -7,22 +7,29 @@ extension IMAPClient {
     /// `MessageSummary` always carries this core metadata, so a caller passing a
     /// reduced item set still gets a complete summary rather than a parse failure.
     /// UID is also needed to map each response back to its request when fetches
-    /// are pipelined. Items are prepended so the caller's order is otherwise kept.
-    func summaryFetchItems(_ items: [IMAPCommand.FetchItem]) -> [IMAPCommand.FetchItem] {
-        var result = items
-        func isMissing(_ test: (IMAPCommand.FetchItem) -> Bool) -> Bool {
-            !result.contains(where: test)
+    /// are pipelined. The missing attributes are prepended (`UID`, `INTERNALDATE`,
+    /// `RFC822.SIZE`) so the caller's order is otherwise kept.
+    ///
+    /// The `ALL`/`FAST`/`FULL` macros already expand to `FLAGS INTERNALDATE
+    /// RFC822.SIZE` (RFC 3501 §6.4.5), so they satisfy the date/size requirement
+    /// and only `UID` (absent from every macro) is added alongside them.
+    static func summaryFetchItems(_ items: [IMAPCommand.FetchItem]) -> [IMAPCommand.FetchItem] {
+        func contains(_ test: (IMAPCommand.FetchItem) -> Bool) -> Bool {
+            items.contains(where: test)
         }
-        if isMissing({ if case .rfc822Size = $0 { return true }; return false }) {
-            result.insert(.rfc822Size, at: 0)
+        let hasMacro = contains { switch $0 { case .all, .fast, .full: return true; default: return false } }
+
+        var prefix: [IMAPCommand.FetchItem] = []
+        if !contains({ if case .uid = $0 { return true }; return false }) {
+            prefix.append(.uid)
         }
-        if isMissing({ if case .internalDate = $0 { return true }; return false }) {
-            result.insert(.internalDate, at: 0)
+        if !hasMacro, !contains({ if case .internalDate = $0 { return true }; return false }) {
+            prefix.append(.internalDate)
         }
-        if isMissing({ if case .uid = $0 { return true }; return false }) {
-            result.insert(.uid, at: 0)
+        if !hasMacro, !contains({ if case .rfc822Size = $0 { return true }; return false }) {
+            prefix.append(.rfc822Size)
         }
-        return result
+        return prefix + items
     }
 
     /// Returns message UIDs matching the search criteria.
@@ -72,8 +79,10 @@ extension IMAPClient {
 
     /// Fetches a message by its UID.
     ///
-    /// - Note: UID is automatically included in fetch items if not present, to verify
-    ///   the response matches the requested message.
+    /// - Note: the attributes a `MessageSummary` needs — UID, internal date, and
+    ///   size — are added to the fetch when absent, so a reduced `items` set still
+    ///   yields a complete summary. UID also lets the response be matched to the
+    ///   requested message.
     ///
     /// - Parameters:
     ///   - uid: The UID of the message to fetch
@@ -102,7 +111,7 @@ extension IMAPClient {
                 // Ensure the summary's required attributes (UID, internal date,
                 // size) are fetched even from a reduced item set; UID also maps
                 // each response back to its request when fetches are pipelined.
-                let fetchItems = self.summaryFetchItems(items)
+                let fetchItems = IMAPClient.summaryFetchItems(items)
 
                 let responses = try await self.connection.sendCommand(
                     .uid(.fetch(sequence: .single(uid), items: fetchItems))

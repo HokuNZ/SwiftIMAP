@@ -135,6 +135,33 @@ final class IMAPClientUIDSearchTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// A reduced `fetchItems` set on searchMessages still yields a complete
+    /// summary: the batched UID FETCH carries UID/INTERNALDATE/RFC822.SIZE.
+    func testSearchMessagesWithReducedItemsAutoAddsSummaryAttributes() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 100")
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 100 FLAGS (\\Seen) INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 42)")
+
+        let client = makeClient()
+        try await client.connect()
+
+        // Caller asks only for flags; the required attributes are added.
+        let summaries = try await client.searchMessages(in: "INBOX", criteria: .all, fetchItems: [.flags])
+
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries.first?.uid, 100)
+        XCTAssertEqual(summaries.first?.size, 42)
+
+        let fetch = (mockServer.receivedCommands.first { $0.uppercased().contains("UID FETCH") } ?? "").uppercased()
+        XCTAssertTrue(fetch.contains("(UID"), "UID must be in the item list: \(fetch)")
+        XCTAssertTrue(fetch.contains("INTERNALDATE"), "INTERNALDATE auto-added: \(fetch)")
+        XCTAssertTrue(fetch.contains("RFC822.SIZE"), "RFC822.SIZE auto-added: \(fetch)")
+
+        await client.disconnect()
+    }
+
     /// Results are returned in the searched-UID order, and a UID the server
     /// omits (deleted between search and fetch) is skipped rather than failing
     /// the call.
