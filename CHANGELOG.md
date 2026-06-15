@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-06-15
+
 ### Security
 - `IMAPError` no longer embeds command arguments in its messages, closing a credential/payload leak (#27). The `commandFailed` error previously built its command field with `String(describing:)`, so a rejected `LOGIN` produced an error (and `localizedDescription`) containing the cleartext password; `APPEND` embedded the whole message body. The debug log line for every outgoing command and the `invalidState` validator messages had the same leak. All now use a new argument-free `IMAPCommand.Command.label` (e.g. `"UID MOVE"`, `"LOGIN"`).
 - Parser errors now truncate the offending server input (`String.truncatedForDiagnostics`), so a malformed or oversized response line can no longer dump unbounded content (including message data) into logs or crash reports.
