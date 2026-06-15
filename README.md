@@ -25,7 +25,7 @@ Add SwiftIMAP to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "1.0.0")
+    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "2.0.0")
 ]
 ```
 
@@ -70,6 +70,10 @@ if let firstUID = messageUIDs.first {
 // Disconnect
 await client.disconnect()
 ```
+
+> An `IMAPClient` wraps a single connection with one selected mailbox. Its
+> mailbox-scoped operations are not safe to run concurrently on one instance —
+> issue them serially, or use one client per concurrent context.
 
 ## Command-Line Tool
 
@@ -171,8 +175,18 @@ let mailboxes = try await client.listMailboxes()
 // List with pattern
 let inboxSubfolders = try await client.listMailboxes(pattern: "INBOX.*")
 
+// List only subscribed mailboxes
+let subscribed = try await client.listSubscribedMailboxes()
+
 // Get mailbox status without selecting
 let status = try await client.mailboxStatus("Sent")
+
+// Create / rename / delete, and manage subscriptions
+try await client.createMailbox("Projects/2026")
+try await client.renameMailbox(from: "Projects/2026", to: "Archive/2026")
+try await client.subscribeMailbox("Archive/2026")
+try await client.unsubscribeMailbox("Archive/2026")
+try await client.deleteMailbox("Archive/2026")
 ```
 
 ### Message Operations
@@ -213,7 +227,96 @@ try await client.storeFlags(uid: 12345, in: "INBOX", flags: ["ProjectA"], action
 let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("ProjectA"))
 
 // Labels map to IMAP keywords (Gmail's X-GM-LABELS extension is not implemented)
+
+// Mark read / unread
+try await client.markAsRead(uid: 12345, in: "INBOX")
+
+// Move, copy, delete
+try await client.moveMessage(uid: 12345, from: "INBOX", to: "Archive")
+try await client.copyMessages(uids: [1, 2, 3], from: "INBOX", to: "Backup")
+try await client.deleteMessages(uids: [12345], in: "INBOX")   // STORE \Deleted, then UID EXPUNGE
+
+// Append a message (e.g. save a draft)
+try await client.appendMessage(rfc822Data, to: "Drafts", flags: [.draft])
 ```
+
+**Guarding writes against a stale mailbox view.** Pass `expectedUIDValidity:` to
+any write (`storeFlags`, `moveMessage(s)`, `copyMessage(s)`, `expunge(uids:)`,
+`deleteMessage(s)`) and it's refused with `IMAPError.uidValidityChanged`, before
+any command is sent, if the mailbox was recreated since you read those UIDs:
+
+```swift
+let status = try await client.selectMailbox("INBOX")
+let uids = try await client.listMessageUIDs(in: "INBOX", searchCriteria: .unseen)
+try await client.moveMessages(uids: uids, from: "INBOX", to: "Archive",
+                              expectedUIDValidity: status.uidValidity)
+```
+
+> Targeted `deleteMessage(s)` / `expunge(uids:)` require `UIDPLUS` (they use
+> `UID EXPUNGE`) and throw `unsupportedCapability("UIDPLUS")` otherwise. Without
+> the `MOVE` extension, `moveMessage(s)` falls back to copy-then-mark-`\Deleted`,
+> leaving the source until expunged.
+
+### Threading
+
+`Message-ID`, `In-Reply-To`, and `References` are exposed as `MessageId` values
+rather than raw strings. `MessageId` canonicalises to the bare form on parse, so
+identifiers compare equal regardless of how a server framed them (with or without
+angle brackets) — threading comparisons need no bracket handling:
+
+```swift
+// Fetch the References header alongside the envelope
+let summary = try await client.fetchMessage(
+    uid: 12345, in: "INBOX",
+    items: [.envelope, .bodyHeaderFields(fields: ["References"], peek: true)]
+)
+
+if let parent = summary?.envelope?.inReplyTo,
+   summary?.references.contains(parent) == true {
+    // this message replies to a known ancestor in its own thread
+}
+
+let id = summary?.envelope?.messageId
+id?.value       // "abc@host"   — bare canonical identity
+id?.bracketed   // "<abc@host>" — ready to write into an outgoing header
+```
+
+### MIME content and attachments
+
+Parse a fetched body into its MIME parts — text, HTML, and attachments:
+
+```swift
+guard let data = try await client.fetchMessageBody(uid: 12345, in: "INBOX"),
+      let mime = try MessageSummary.parseMIMEContent(from: data) else { return }
+
+let text = mime.plainTextContent
+let html = mime.htmlContent
+for attachment in mime.attachments {
+    print("\(attachment.filename ?? "unnamed"): \(attachment.decodedData?.count ?? 0) bytes")
+}
+```
+
+`ParsedMIMEMessage` and `MIMEPart` are `Sendable` value types (parts hold decoded
+content), so parsed results can cross actor and task boundaries.
+
+### Parsing raw messages
+
+For consumers holding raw RFC 822 bytes rather than a live `FETCH` — `.eml`
+files, Maildir, webhook payloads, test fixtures — build the typed model directly.
+Header parsing is independent of the MIME body (so an unparseable body won't lose
+the envelope) and tolerates real-world bytes (non-UTF-8 content, a leading mbox
+`From ` line):
+
+```swift
+// Whole message → MessageSummary (envelope + references populated)
+let summary = try MessageSummary.parse(rfc822: emlData)
+
+// Just a header dictionary → typed Envelope
+let envelope = Envelope(parsingHeaders: ["From": "a@x.com", "Subject": "Hi"])
+```
+
+> A parsed summary is read-only metadata: its `uid` is a placeholder (`0`), so
+> don't pass it back into UID-based operations.
 
 ### Error Handling
 
@@ -254,12 +357,8 @@ do {
 }
 ```
 
-> When switching over `IMAPError` (or any other library enum), include a `default:`
-> arm — new cases may be added in minor releases. See [API stability](#api-stability).
-
-> **Migrating from 1.x?** `IMAPError` was reshaped and some APIs were removed or
-> tightened in 2.0. See the [migration guide](docs/migration-v1-to-v2.md) for the
-> full list and the replacement for each change.
+The `default:` arm above is deliberate — see [Versions](#versions) for why library
+enums need one.
 
 ## Testing
 
@@ -283,10 +382,26 @@ SwiftIMAP is built with a layered architecture:
 2. **Protocol Layer** (Parser/Encoder): Implements IMAP protocol parsing and encoding
 3. **API Layer** (IMAPClient): Provides high-level async/await APIs
 
-## API stability
+## Security
 
-SwiftIMAP follows [semantic versioning](https://semver.org). Breaking changes
-to the public API land only in major releases.
+- TLS 1.2+ is required by default
+- Certificate validation enabled
+- Sensitive data (passwords) never logged
+- Support for certificate pinning via custom TLSConfiguration
+
+## Versions
+
+SwiftIMAP follows [semantic versioning](https://semver.org). Breaking changes to
+the public API land only in major releases. The [CHANGELOG](CHANGELOG.md) records
+the per-release detail.
+
+### Migration
+
+Upgrading across a major? The [1.x → 2.0 migration guide](docs/migration-v1-to-v2.md)
+lists every change that needs a code update, with the replacement for each, and
+the [CHANGELOG](CHANGELOG.md) carries the full per-change history.
+
+### API stability
 
 **Enums may grow in minor releases.** Public enums — `IMAPError`,
 `IMAPResponse.ResponseCode`, `IMAPCommand.SearchCriteria`, and others — may gain
@@ -303,15 +418,6 @@ default: log.error("\(error.localizedDescription)")   // tolerates future cases
 
 (Swift source packages can't use `@unknown default`, so a plain `default` is the
 tool here.)
-
-Upgrading across a major? See the [1.x → 2.0 migration guide](docs/migration-v1-to-v2.md).
-
-## Security
-
-- TLS 1.2+ is required by default
-- Certificate validation enabled
-- Sensitive data (passwords) never logged
-- Support for certificate pinning via custom TLSConfiguration
 
 ## Contributing
 
