@@ -11,7 +11,7 @@ SwiftIMAP is a modern, pure-Swift IMAP client framework providing a lightweight,
 - `Sources/SwiftIMAP/` holds the library code (protocol parsing/encoding, networking, models, configuration).
 - `Sources/IMAPCLITool/` contains the command-line tester.
 - `Tests/SwiftIMAPTests/` includes XCTest unit and integration tests.
-- `Examples/BasicUsage.swift` is a runnable end-to-end sample (illustrative — not a build target, so not compiled by CI); root `debug_*.swift` scripts are ad-hoc helpers.
+- `Examples/` holds runnable, compile-checked sample executables — `BasicUsage` (live server) and `OfflineParsing` (raw `.eml`/header parsing, no server); run via `swift run BasicUsageExample` / `swift run OfflineParsingExample`. Root `debug_*.swift` scripts are ad-hoc helpers.
 - `Package.swift` defines the library product `SwiftIMAP` and CLI product `swift-imap-tester`.
 
 ## Build, Test, and Development Commands

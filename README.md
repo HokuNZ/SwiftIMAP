@@ -76,7 +76,8 @@ await client.disconnect()
 > issue them serially, or use one client per concurrent context.
 
 A complete runnable version of this flow is in
-[`Examples/BasicUsage.swift`](Examples/BasicUsage.swift).
+[`Examples/BasicUsage/BasicUsage.swift`](Examples/BasicUsage/BasicUsage.swift)
+(`swift run BasicUsageExample`).
 
 ## Command-Line Tool
 
@@ -320,6 +321,9 @@ let envelope = Envelope(parsingHeaders: ["From": "a@x.com", "Subject": "Hi"])
 
 > A parsed summary is read-only metadata: its `uid` is a placeholder (`0`), so
 > don't pass it back into UID-based operations.
+
+See [`Examples/OfflineParsing/OfflineParsing.swift`](Examples/OfflineParsing/OfflineParsing.swift)
+for a runnable, server-free example (`swift run OfflineParsingExample`).
 
 ### Error Handling
 
