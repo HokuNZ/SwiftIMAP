@@ -11,7 +11,7 @@ SwiftIMAP is a modern, pure-Swift IMAP client framework providing a lightweight,
 - `Sources/SwiftIMAP/` holds the library code (protocol parsing/encoding, networking, models, configuration).
 - `Sources/IMAPCLITool/` contains the command-line tester.
 - `Tests/SwiftIMAPTests/` includes XCTest unit and integration tests.
-- `Examples/` provides sample usage; root `debug_*.swift` scripts are ad-hoc helpers.
+- `Examples/BasicUsage.swift` is a runnable end-to-end sample (illustrative — not a build target, so not compiled by CI); root `debug_*.swift` scripts are ad-hoc helpers.
 - `Package.swift` defines the library product `SwiftIMAP` and CLI product `swift-imap-tester`.
 
 ## Build, Test, and Development Commands
@@ -50,12 +50,13 @@ swift package generate-documentation                # DocC output
 
 ## Coding Style and Conventions
 
-- Swift 5.10+, async/await-first APIs; keep public APIs `async throws`.
+- Swift 5.10+, async/await-first. Network/IO-bound public APIs are `async throws`; pure parsing and value-type APIs (e.g. `MessageId(parsing:)`, `Envelope(parsingHeaders:)`, `MessageSummary.parse(rfc822:)`) are synchronous.
 - Follow `.swiftlint.yml` (run `swiftlint` if installed); no `print` in library code, use `Logger`.
 - 4-space indentation. Swift standard naming: `PascalCase` types, `camelCase` methods/vars.
 - Extension files use `Type+Feature.swift` (e.g., `MessageSummary+MIME.swift`).
-- All public APIs must be `async throws`; use actors for thread-safe state.
+- Use actors for shared mutable connection state. `IMAPClient` is a single-connection client (one selected mailbox); its mailbox-scoped operations are not safe to run concurrently on one instance.
 - Use `IMAPError` for all errors; include raw server messages where useful.
+- Comments explain the current code, not its history — don't cite issue/PR/review numbers in source or test comments (the CHANGELOG carries `(#N)` links).
 
 ## Testing Guidelines
 
@@ -86,7 +87,7 @@ swift package generate-documentation                # DocC output
 
 ## Common Issues
 
-1. **Modified UTF-7 encoding**: mailbox names use a special encoding — see `IMAPEncoder.encodeModifiedUTF7`.
+1. **Modified UTF-7 encoding**: mailbox names use a special encoding — see `IMAPMailboxNameCodec` (`encode`/`decode`).
 2. **Response parsing**: some servers send non-standard responses — the parser is intentionally lenient.
 3. **TLS**: some servers require specific TLS versions or cipher suites.
 4. **Authentication**: different servers support different mechanisms — check the `CAPABILITY` response.
@@ -100,7 +101,7 @@ swift package generate-documentation                # DocC output
 Consumers reference SwiftIMAP via:
 
 ```swift
-.package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "1.0.0")
+.package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "2.0.0")
 ```
 
 - Tags (e.g. `v1.0`, `v1.1`) are immutable release points.

@@ -75,6 +75,9 @@ await client.disconnect()
 > mailbox-scoped operations are not safe to run concurrently on one instance —
 > issue them serially, or use one client per concurrent context.
 
+A complete runnable version of this flow is in
+[`Examples/BasicUsage.swift`](Examples/BasicUsage.swift).
+
 ## Command-Line Tool
 
 SwiftIMAP includes a command-line tool for testing IMAP connections.
