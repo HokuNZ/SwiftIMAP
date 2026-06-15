@@ -25,7 +25,7 @@ Add SwiftIMAP to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "1.0.0")
+    .package(url: "https://github.com/HokuNZ/SwiftIMAP.git", from: "2.0.0")
 ]
 ```
 
@@ -58,7 +58,7 @@ let status = try await client.selectMailbox("INBOX")
 print("Messages in INBOX: \(status.messages)")
 
 // Search for messages
-let messageUIDs = try await client.listMessages(in: "INBOX")
+let messageUIDs = try await client.listMessageUIDs(in: "INBOX")
 
 // Fetch a message
 if let firstUID = messageUIDs.first {
@@ -71,9 +71,18 @@ if let firstUID = messageUIDs.first {
 await client.disconnect()
 ```
 
+> An `IMAPClient` wraps a single connection with one selected mailbox. Its
+> mailbox-scoped operations are not safe to run concurrently on one instance —
+> issue them serially, or use one client per concurrent context.
+
+A complete runnable version of this flow is in
+[`Examples/BasicUsage/BasicUsage.swift`](Examples/BasicUsage/BasicUsage.swift)
+(`swift run BasicUsageExample`).
+
 ## Command-Line Tool
 
-SwiftIMAP includes a command-line tool for testing IMAP connections.
+SwiftIMAP includes `swift-imap-tester` for exercising connections against a real
+server. It has two subcommands, `connect` (one-shot) and `interactive`.
 
 ### Building the CLI
 
@@ -81,44 +90,41 @@ SwiftIMAP includes a command-line tool for testing IMAP connections.
 swift build --product swift-imap-tester
 ```
 
-### Basic Usage
+### One-shot commands
+
+`connect` runs a single command and exits. `--command` accepts `list` (default),
+`select`, `search`, or `fetch`:
 
 ```bash
-# Connect and list mailboxes
+# List mailboxes
 .build/debug/swift-imap-tester connect \
-  --host imap.gmail.com \
-  --username your@email.com \
-  --password yourpassword \
+  --host imap.gmail.com --username your@email.com --password yourpassword \
   --command list
 
 # Fetch a specific message
 .build/debug/swift-imap-tester connect \
-  --host imap.gmail.com \
-  --username your@email.com \
-  --password yourpassword \
-  --command fetch \
-  --mailbox INBOX \
-  --uid 12345
+  --host imap.gmail.com --username your@email.com --password yourpassword \
+  --command fetch --mailbox INBOX --uid 12345
 ```
 
-### Interactive Mode
+Connection flags (both subcommands): `--host`, `--username`, `--password`,
+`--port` (default 993), `--starttls`, `--no-tls`, `--verbose`.
+
+### Interactive mode
 
 ```bash
 .build/debug/swift-imap-tester interactive \
-  --host imap.gmail.com \
-  --username your@email.com \
-  --password yourpassword
+  --host imap.gmail.com --username your@email.com --password yourpassword
 ```
 
-Interactive commands:
-- `list [pattern]` - List mailboxes
-- `select <mailbox>` - Select a mailbox
-- `status [mailbox]` - Show mailbox status
-- `search` - Search messages in selected mailbox
-- `fetch <uid>` - Fetch a message by UID
-- `capability` - Show server capabilities
-- `help` - Show available commands
-- `quit` - Disconnect and exit
+Interactive commands (type `help` for the full list):
+
+- `list [pattern]`, `select <mailbox>`, `status [mailbox]`, `close`
+- `messages`, `fetch <uid>`, `capability`
+- `search [from <email> | subject <text> | text <text> | unread | flagged | since <date>]`
+- `read <uid>`, `unread <uid>`, `flag <uid>`, `unflag <uid>`
+- `copy <uid> <mailbox>`, `move <uid> <mailbox>`, `delete <uid>`, `expunge`
+- `help`, `quit`
 
 ## API Documentation
 
@@ -171,25 +177,35 @@ let mailboxes = try await client.listMailboxes()
 // List with pattern
 let inboxSubfolders = try await client.listMailboxes(pattern: "INBOX.*")
 
+// List only subscribed mailboxes
+let subscribed = try await client.listSubscribedMailboxes()
+
 // Get mailbox status without selecting
 let status = try await client.mailboxStatus("Sent")
+
+// Create / rename / delete, and manage subscriptions
+try await client.createMailbox("Projects/2026")
+try await client.renameMailbox(from: "Projects/2026", to: "Archive/2026")
+try await client.subscribeMailbox("Archive/2026")
+try await client.unsubscribeMailbox("Archive/2026")
+try await client.deleteMailbox("Archive/2026")
 ```
 
 ### Message Operations
 
 ```swift
 // Search messages
-let allMessages = try await client.listMessages(
+let allMessageUIDs = try await client.listMessageUIDs(
     in: "INBOX",
     searchCriteria: .all
 )
 
-let unreadMessages = try await client.listMessages(
-    in: "INBOX", 
+let unreadUIDs = try await client.listMessageUIDs(
+    in: "INBOX",
     searchCriteria: .unseen
 )
 
-let fromAlice = try await client.listMessages(
+let fromAlice = try await client.listMessageUIDs(
     in: "INBOX",
     searchCriteria: .from("alice@example.com")
 )
@@ -213,7 +229,141 @@ try await client.storeFlags(uid: 12345, in: "INBOX", flags: ["ProjectA"], action
 let labeled = try await client.searchMessages(in: "INBOX", criteria: .keyword("ProjectA"))
 
 // Labels map to IMAP keywords (Gmail's X-GM-LABELS extension is not implemented)
+
+// Mark read / unread
+try await client.markAsRead(uid: 12345, in: "INBOX")
+
+// Move, copy, delete
+try await client.moveMessage(uid: 12345, from: "INBOX", to: "Archive")
+try await client.copyMessages(uids: [1, 2, 3], from: "INBOX", to: "Backup")
+try await client.deleteMessages(uids: [12345], in: "INBOX")   // STORE \Deleted, then UID EXPUNGE
+
+// Append a message (e.g. save a draft)
+try await client.appendMessage(rfc822Data, to: "Drafts", flags: [.draft])
 ```
+
+**Guarding writes against a stale mailbox view.** Pass `expectedUIDValidity:` to
+any write (`storeFlags`, `moveMessage(s)`, `copyMessage(s)`, `expunge(uids:)`,
+`deleteMessage(s)`) and it's refused with `IMAPError.uidValidityChanged`, before
+any command is sent, if the mailbox was recreated since you read those UIDs:
+
+```swift
+let status = try await client.selectMailbox("INBOX")
+let uids = try await client.listMessageUIDs(in: "INBOX", searchCriteria: .unseen)
+try await client.moveMessages(uids: uids, from: "INBOX", to: "Archive",
+                              expectedUIDValidity: status.uidValidity)
+```
+
+> Targeted `deleteMessage(s)` / `expunge(uids:)` require `UIDPLUS` (they use
+> `UID EXPUNGE`) and throw `unsupportedCapability("UIDPLUS")` otherwise. Without
+> the `MOVE` extension, `moveMessage(s)` falls back to copy-then-mark-`\Deleted`,
+> leaving the source until expunged.
+
+### Threading
+
+`Message-ID`, `In-Reply-To`, and `References` are exposed as `MessageId` values
+rather than raw strings. `MessageId` canonicalises to the bare form on parse, so
+identifiers compare equal regardless of how a server framed them (with or without
+angle brackets) — threading comparisons need no bracket handling:
+
+```swift
+// Fetch the References header alongside the envelope
+let summary = try await client.fetchMessage(
+    uid: 12345, in: "INBOX",
+    items: [.envelope, .bodyHeaderFields(fields: ["References"], peek: true)]
+)
+
+if let parent = summary?.envelope?.inReplyTo,
+   summary?.references.contains(parent) == true {
+    // this message replies to a known ancestor in its own thread
+}
+
+let id = summary?.envelope?.messageId
+id?.value       // "abc@host"   — bare canonical identity
+id?.bracketed   // "<abc@host>" — ready to write into an outgoing header
+```
+
+### MIME content and attachments
+
+Parse a fetched body into its MIME parts — text, HTML, and attachments:
+
+```swift
+guard let data = try await client.fetchMessageBody(uid: 12345, in: "INBOX"),
+      let mime = try MessageSummary.parseMIMEContent(from: data) else { return }
+
+let text = mime.plainTextContent
+let html = mime.htmlContent
+for attachment in mime.attachments {
+    print("\(attachment.filename ?? "unnamed"): \(attachment.decodedData?.count ?? 0) bytes")
+}
+```
+
+`ParsedMIMEMessage` and `MIMEPart` are `Sendable` value types (parts hold decoded
+content), so parsed results can cross actor and task boundaries.
+
+### Parsing raw messages
+
+For consumers holding raw RFC 822 bytes rather than a live `FETCH` — `.eml`
+files, Maildir, webhook payloads, test fixtures — build the typed model directly.
+Header parsing is independent of the MIME body (so an unparseable body won't lose
+the envelope) and tolerates real-world bytes (non-UTF-8 content, a leading mbox
+`From ` line):
+
+```swift
+// Whole message → MessageSummary (envelope + references populated)
+let summary = try MessageSummary.parse(rfc822: emlData)
+
+// Just a header dictionary → typed Envelope
+let envelope = Envelope(parsingHeaders: ["From": "a@x.com", "Subject": "Hi"])
+```
+
+> A parsed summary is read-only metadata: its `uid` is a placeholder (`0`), so
+> don't pass it back into UID-based operations.
+
+See [`Examples/OfflineParsing/OfflineParsing.swift`](Examples/OfflineParsing/OfflineParsing.swift)
+for a runnable, server-free example (`swift run OfflineParsingExample`).
+
+### Error Handling
+
+All operations throw `IMAPError`. When the server rejects a command, `commandFailed`
+carries a structured `IMAPServerResponse` so you can log a faithful server response
+line and distinguish causes. SwiftIMAP never puts your command arguments, credentials,
+or message bodies into error output. Two caveats on server-supplied text: a
+`commandFailed`/`connectionClosed` response `line` includes the server's own text,
+which some servers echo user-specific details into (e.g. a mailbox name); and a
+`parsingError` embeds a truncated slice of the offending server input for diagnostics,
+which can include message content. Treat both as potentially sensitive before exporting
+to third parties.
+
+```swift
+do {
+    try await client.moveMessage(uid: 12345, from: "INBOX", to: "Archive")
+} catch let error as IMAPError {
+    switch error {
+    case .commandFailed(let response):
+        // response.status  -> .no / .bad
+        // response.code    -> e.g. .tryCreate, .other("OVERQUOTA", nil)
+        // response.line    -> "NO [TRYCREATE] Mailbox does not exist"
+        //                     (server text — may echo user details like a mailbox name)
+        log.error("\(response.commandName) failed: \(response.line)")
+        if response.isMailboxNotFound { /* destination renamed or removed */ }
+        if response.isOverQuota { /* account over quota */ }
+    case .connectionClosed(let response):
+        // A server BYE, e.g. "BYE [ALERT] Too many connections"
+        log.error("Connection closed: \(response?.line ?? "unexpected")")
+    case .timeout(let command):
+        log.error("Timed out: \(command ?? "connection")")
+    case .connectionFailed(_, let underlying):
+        // The typed transport cause (NIO/SSL error) is preserved for inspection
+        log.error("Connect failed: \(underlying.map(String.init(describing:)) ?? "unknown")")
+    default:
+        log.error("\(error.localizedDescription)")
+    }
+}
+```
+
+The `default:` arm above is deliberate — see [Versions](#versions) for why library
+enums need one.
 
 ## Testing
 
@@ -243,6 +393,36 @@ SwiftIMAP is built with a layered architecture:
 - Certificate validation enabled
 - Sensitive data (passwords) never logged
 - Support for certificate pinning via custom TLSConfiguration
+
+## Versions
+
+SwiftIMAP follows [semantic versioning](https://semver.org). Breaking changes to
+the public API land only in major releases. The [CHANGELOG](CHANGELOG.md) records
+the per-release detail.
+
+### Migration
+
+Upgrading across a major? The [1.x → 2.0 migration guide](docs/migration-v1-to-v2.md)
+lists every change that needs a code update, with the replacement for each, and
+the [CHANGELOG](CHANGELOG.md) carries the full per-change history.
+
+### API stability
+
+**Enums may grow in minor releases.** Public enums — `IMAPError`,
+`IMAPResponse.ResponseCode`, `IMAPCommand.SearchCriteria`, and others — may gain
+new cases in a minor release. When you switch over one, always include a
+`default:` arm so a new case doesn't break your build:
+
+```swift
+switch error {
+case .commandFailed(let response): ...
+case .connectionClosed(let response): ...
+default: log.error("\(error.localizedDescription)")   // tolerates future cases
+}
+```
+
+(Swift source packages can't use `@unknown default`, so a plain `default` is the
+tool here.)
 
 ## Contributing
 

@@ -7,35 +7,91 @@ extension MessageSummary {
     /// Reads no instance state, so callers with raw bytes but no populated
     /// `MessageSummary` (e.g. an `.eml` fixture harness) can parse without
     /// synthesising a stub instance.
-    public static func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
-        // Convert Data to String for MimeParser
-        guard let bodyString = String(data: bodyData, encoding: .utf8) else {
-            throw IMAPError.parsingError("Failed to decode body data as UTF-8")
-        }
+    ///
+    /// Bytes are decoded as UTF-8 with an ISO-8859-1 fallback, so a message whose
+    /// body is not valid UTF-8 — common in real mail — still parses. Throws
+    /// `IMAPError.parsingError` if the MIME structure itself cannot be parsed.
+    public static func parseMIMEContent(from bodyData: Data) throws -> ParsedMIMEMessage? {
+        // Decode UTF-8, falling back to ISO-8859-1 (which maps every byte) so a
+        // body that is not valid UTF-8 does not fail at the decode step. RFC 2047
+        // encoded-words carry non-ASCII in headers regardless of this charset.
+        let bodyString = String(data: bodyData, encoding: .utf8)
+            ?? String(data: bodyData, encoding: .isoLatin1)
+            ?? ""
 
-        // Parse the MIME content
         let parser = MimeParser()
         let mime = try parser.parse(bodyString)
 
-        return ParsedMimeMessage(from: mime)
+        return ParsedMIMEMessage(from: mime)
     }
 
     /// Parse MIME content from the given body data.
     ///
-    /// Convenience wrapper over the static `parseMimeContent(from:)` for callers
+    /// Convenience wrapper over the static `parseMIMEContent(from:)` for callers
     /// that already hold a `MessageSummary`. No instance state is used.
-    public func parseMimeContent(from bodyData: Data) throws -> ParsedMimeMessage? {
-        try MessageSummary.parseMimeContent(from: bodyData)
+    public func parseMIMEContent(from bodyData: Data) throws -> ParsedMIMEMessage? {
+        try MessageSummary.parseMIMEContent(from: bodyData)
+    }
+
+    /// Build a `MessageSummary` from a complete RFC 822 message.
+    ///
+    /// For consumers with raw message bytes rather than a live IMAP `FETCH`
+    /// (`.eml` importers, Maildir readers, webhook payloads, offline fixtures):
+    /// parses the headers into a typed `Envelope` (see
+    /// ``Envelope/init(parsingHeaders:)``) and populates `references` from the
+    /// `References` header.
+    ///
+    /// Header parsing is independent of the MIME body: `MessageSummary` carries
+    /// no body-derived fields, so a body that the MIME parser cannot handle (an
+    /// unusual multipart, non-UTF-8 content) does not lose the recoverable
+    /// envelope. The bytes are decoded as UTF-8 with an ISO-8859-1 fallback, and
+    /// a leading mbox `From ` envelope line (emitted by archive converters) is
+    /// stripped before parsing.
+    ///
+    /// The `uid` and `sequenceNumber` are synthesised as `0` — there is no IMAP
+    /// session to assign them. `internalDate` comes from the `Date` header, or
+    /// the current time if it is missing or unparseable. `size` is the byte
+    /// length of `data`.
+    ///
+    /// Treat a parsed summary as read-only metadata: its `uid` is a placeholder
+    /// (`0` is not a valid IMAP UID), so do not pass it back into UID-based
+    /// operations such as `fetchMessage(uid:in:)` or `storeFlags(uid:in:)`.
+    ///
+    /// Throws `IMAPError.parsingError` only if no RFC 822 headers can be found at
+    /// all (e.g. empty or non-message input).
+    public static func parse(rfc822 data: Data) throws -> MessageSummary {
+        // Parse headers independently of the MIME body so a body the MIME parser
+        // chokes on (unusual multipart, non-UTF-8 bytes) does not lose the
+        // envelope. MessageSummary has no body-derived fields, so this is all it
+        // needs.
+        let headers = RFC2822.parseHeaderFields(from: data)
+        guard !headers.isEmpty else {
+            throw IMAPError.parsingError("No RFC 822 headers found")
+        }
+
+        let envelope = Envelope(parsingHeaders: headers)
+        let references = MessageId.parseList(headers["references"] ?? "")
+
+        return MessageSummary(
+            uid: 0,
+            sequenceNumber: 0,
+            internalDate: envelope.date ?? Date(),
+            // size is informational; saturate rather than trap on a message
+            // larger than UInt32.max (~4 GB).
+            size: UInt32(clamping: data.count),
+            envelope: envelope,
+            references: references
+        )
     }
 }
 
 /// A parsed MIME message with convenient access to parts
-public struct ParsedMimeMessage {
+public struct ParsedMIMEMessage: Sendable, Equatable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
     public let transferEncoding: String?
-    public let parts: [MimePart]
+    public let parts: [MIMEPart]
     public let boundary: String?
     public let isMultipart: Bool
 
@@ -49,14 +105,14 @@ public struct ParsedMimeMessage {
     }
 
     init(from mime: Mime) {
-        let headerInfo = ParsedMimeMessage.parseHeaderInfo(from: mime.header)
+        let headerInfo = ParsedMIMEMessage.parseHeaderInfo(from: mime.header)
         self.headers = headerInfo.headers
         self.contentType = headerInfo.contentType
         self.charset = headerInfo.charset
         self.transferEncoding = headerInfo.transferEncoding
         self.boundary = headerInfo.boundary
         self.isMultipart = headerInfo.isMultipart
-        self.parts = ParsedMimeMessage.extractParts(from: mime)
+        self.parts = ParsedMIMEMessage.extractParts(from: mime)
     }
 
     private static func parseHeaderInfo(from header: MimeHeader) -> HeaderInfo {
@@ -107,13 +163,13 @@ public struct ParsedMimeMessage {
     }
     
     /// Recursively extract all parts from a MIME message
-    private static func extractParts(from mime: Mime) -> [MimePart] {
-        var allParts: [MimePart] = []
+    private static func extractParts(from mime: Mime) -> [MIMEPart] {
+        var allParts: [MIMEPart] = []
         
         switch mime.content {
         case .body(let body):
-            let headerInfo = ParsedMimeMessage.parseHeaderInfo(from: mime.header)
-            let part = MimePart(
+            let headerInfo = ParsedMIMEMessage.parseHeaderInfo(from: mime.header)
+            let part = MIMEPart(
                 body: body,
                 headers: headerInfo.headers,
                 contentType: headerInfo.contentType,
@@ -135,21 +191,21 @@ public struct ParsedMimeMessage {
     }
     
     /// Get all parts of a specific content type
-    public func parts(withContentType contentType: String) -> [MimePart] {
+    public func parts(withContentType contentType: String) -> [MIMEPart] {
         parts.filter { part in
             part.contentType?.lowercased().hasPrefix(contentType.lowercased()) ?? false
         }
     }
     
     /// Get the first part matching a content type
-    public func firstPart(withContentType contentType: String) -> MimePart? {
+    public func firstPart(withContentType contentType: String) -> MIMEPart? {
         parts.first { part in
             part.contentType?.lowercased().hasPrefix(contentType.lowercased()) ?? false
         }
     }
     
     /// Get all text parts (both plain and HTML)
-    public var textParts: [MimePart] {
+    public var textParts: [MIMEPart] {
         parts(withContentType: "text/")
     }
     
@@ -179,18 +235,18 @@ public struct ParsedMimeMessage {
     }
     
     /// Get all attachments
-    public var attachments: [MimePart] {
+    public var attachments: [MIMEPart] {
         parts.filter { $0.isAttachment }
     }
     
     /// Get all inline parts (e.g., embedded images)
-    public var inlineParts: [MimePart] {
+    public var inlineParts: [MIMEPart] {
         parts.filter { $0.isInline }
     }
     
     /// Get all parts grouped by content type
-    public var partsByType: [String: [MimePart]] {
-        var grouped: [String: [MimePart]] = [:]
+    public var partsByType: [String: [MIMEPart]] {
+        var grouped: [String: [MIMEPart]] = [:]
         for part in parts {
             if let mimeType = part.mimeType {
                 grouped[mimeType, default: []].append(part)
@@ -200,45 +256,45 @@ public struct ParsedMimeMessage {
     }
 }
 
-/// A single MIME part
-public struct MimePart {
-    public let body: MimeBody
+/// A single MIME part.
+///
+/// Holds only decoded value types (the MimeParser wire objects are consumed at construction)
+public struct MIMEPart: Sendable, Equatable {
     public let headers: [String: String]
     public let contentType: String?
     public let charset: String?
     public let transferEncoding: String?
     public let contentDisposition: String?
     public let contentID: String?
-    private let mime: Mime?
-    
+    public let decodedData: Data?
+    private let rawBody: String
+    private let dispositionFilename: String?
+    private let contentTypeName: String?
+
     init(body: MimeBody, headers: [String: String], contentType: String? = nil, charset: String? = nil, transferEncoding: String? = nil, mime: Mime? = nil) {
         let headerDisposition = mime?.header.contentDisposition?.type
-        let headerTransferEncoding = MimePart.transferEncodingString(from: mime?.header.contentTransferEncoding)
+        let headerTransferEncoding = MIMEPart.transferEncodingString(from: mime?.header.contentTransferEncoding)
 
-        self.body = body
         self.headers = headers
         self.contentType = contentType ?? headers["content-type"]
         self.charset = charset
         self.transferEncoding = transferEncoding ?? headers["content-transfer-encoding"] ?? headerTransferEncoding
         self.contentDisposition = headers["content-disposition"] ?? headerDisposition
         self.contentID = headers["content-id"]
-        self.mime = mime
+        let decoded = try? body.decodedContentData()
+        self.decodedData = decoded
+        self.rawBody = decoded == nil ? body.raw : ""
+        self.dispositionFilename = mime?.header.contentDisposition?.filename
+        self.contentTypeName = mime?.header.contentType?.name
     }
-    
+
     /// Get decoded text content
     public var decodedText: String? {
-        do {
-            let decodedData = try body.decodedContentData()
-            return String(data: decodedData, encoding: encoding)
-        } catch {
-            // Fallback to raw content
-            return body.raw
+        guard let decodedData else {
+            // Could not decode the transfer encoding; fall back to raw content.
+            return rawBody
         }
-    }
-    
-    /// Get decoded data content (for attachments)
-    public var decodedData: Data? {
-        try? body.decodedContentData()
+        return String(data: decodedData, encoding: encoding)
     }
     
     /// Check if this part is an attachment
@@ -296,11 +352,11 @@ public struct MimePart {
     
     /// Get the filename if this is an attachment
     public var filename: String? {
-        if let filename = mime?.header.contentDisposition?.filename {
+        if let filename = dispositionFilename {
             return filename
         }
-        
-        if let name = mime?.header.contentType?.name {
+
+        if let name = contentTypeName {
             return name
         }
 
@@ -357,19 +413,6 @@ public struct MimePart {
         case .quotedPrintable: return "quoted-printable"
         case .base64: return "base64"
         case .other(let value): return value
-        }
-    }
-}
-
-// Helper extension to extract body from MimeContent
-private extension MimeContent {
-    func extractBody() -> MimeBody {
-        switch self {
-        case .body(let body):
-            return body
-        case .mixed(let mimes), .alternative(let mimes):
-            // Return the first body found
-            return mimes.first?.content.extractBody() ?? MimeBody("")
         }
     }
 }

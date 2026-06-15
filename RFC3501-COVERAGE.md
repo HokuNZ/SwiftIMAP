@@ -62,7 +62,7 @@ Reference:
 - [x] CHECK (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] CLOSE (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] EXPUNGE (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
-- [x] SEARCH (full criteria list encoded) (`Sources/SwiftIMAP/Protocol/IMAPEncoder+Search.swift`).
+- [x] SEARCH (full criteria list encoded) (`Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`).
 - [x] FETCH (RFC822.* and header/text variants mapped) (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] STORE (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
 - [x] COPY (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
@@ -150,7 +150,7 @@ Reference:
 - [x] UNFLAGGED
 - [x] UNKEYWORD
 - [x] UNSEEN
-  - Implementation: `Sources/SwiftIMAP/Protocol/IMAPEncoder+Search.swift`
+  - Implementation: `Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`
 
 ## 8. Sequence Sets (RFC 2.3.1.2)
 - [x] `*` (last message) is supported via `.last` and `*:n` via `.rangeFromLast(to:)`.
@@ -166,9 +166,3 @@ Reference:
 - [x] MOVE (RFC 6851) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] UID EXPUNGE (RFC 4315) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] LITERAL+ (RFC 7888) non-synchronizing literals when capability advertised.
-
----
-
-Planned next passes (suggested order):
-1) Expand integration coverage (GreenMail + mock server parity).
-2) Review optional extensions (e.g., LITERAL+ / RFC 7888).

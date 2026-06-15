@@ -19,7 +19,7 @@ extension IMAPParser {
     private func parseTaggedResponse(_ line: String) throws -> IMAPResponse {
         let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
         guard parts.count >= 2 else {
-            throw IMAPError.parsingError("Invalid tagged response: \(line)")
+            throw IMAPError.parsingError("Invalid tagged response: \(line.truncatedForDiagnostics())")
         }
 
         let tag = String(parts[0])
@@ -41,7 +41,7 @@ extension IMAPParser {
         case "BYE":
             status = .bye(code, text)
         default:
-            throw IMAPError.parsingError("Unknown response status: \(statusStr)")
+            throw IMAPError.parsingError("Unknown response status: \(statusStr.truncatedForDiagnostics())")
         }
 
         return .tagged(tag: tag, status: status)
@@ -83,7 +83,7 @@ extension IMAPParser {
             let attributes = try parseFetchAttributes(fetchData)
             return .untagged(.fetch(number, attributes))
         default:
-            throw IMAPError.parsingError("Unknown numeric untagged response: \(command)")
+            throw IMAPError.parsingError("Unknown numeric untagged response: \(command.truncatedForDiagnostics())")
         }
     }
 
@@ -130,7 +130,7 @@ extension IMAPParser {
             return .untagged(.statusResponse(mailbox, status))
 
         default:
-            throw IMAPError.parsingError("Unknown untagged response: \(command)")
+            throw IMAPError.parsingError("Unknown untagged response: \(command.truncatedForDiagnostics())")
         }
     }
 

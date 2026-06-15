@@ -39,6 +39,24 @@ final class GreenMailIntegrationTests: XCTestCase {
         _ = try await client.selectMailbox("INBOX")
     }
 
+    /// connect() is idempotent against a real server: a second call on a
+    /// healthy client is a no-op and the session stays fully usable.
+    func testConnectIsIdempotentAgainstRealServer() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        try await client.connect()
+        try await client.connect()
+
+        let mailboxes = try await client.listMailboxes()
+        XCTAssertTrue(mailboxes.contains { $0.name.uppercased() == "INBOX" })
+
+        // And after an explicit disconnect, connect() re-establishes.
+        await client.disconnect()
+        try await client.connect()
+        _ = try await client.selectMailbox("INBOX")
+    }
+
     func testSearchFlagMoveAndDelete() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
@@ -74,6 +92,43 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertFalse(moved.isEmpty)
         if let movedUid = moved.first?.uid {
             try await client.deleteMessage(uid: movedUid, in: targetMailbox)
+        }
+    }
+
+    func testRejectedMoveToMissingMailboxExposesServerResponse() async throws {
+        let client = try await connectClient()
+        defer { Task { await client.disconnect() } }
+
+        // Seed a message so there is a real UID to move.
+        let subject = "GreenMail Reject \(UUID().uuidString.prefix(8))"
+        let message = makeMessage(subject: subject, body: "Reject-\(UUID().uuidString.prefix(8))")
+        try await client.appendMessage(message, to: "INBOX")
+
+        let matches = try await client.searchMessagesBySubject(subject, in: "INBOX")
+        guard let uid = matches.first?.uid else {
+            XCTFail("Expected a UID from the subject search")
+            return
+        }
+        defer { Task { try? await client.deleteMessage(uid: uid, in: "INBOX") } }
+
+        // Move to a mailbox that does not exist: the server must reject with `NO` and
+        // a mailbox-absent code (`[TRYCREATE]`/`[NONEXISTENT]`), and that response must
+        // be surfaced structurally on IMAPServerResponse rather than as a bare error.
+        let missingMailbox = makeMailboxName(prefix: "DoesNotExist")
+        do {
+            try await client.moveMessage(uid: uid, from: "INBOX", to: missingMailbox)
+            XCTFail("Expected MOVE to a missing mailbox to fail")
+        } catch let error as IMAPError {
+            guard case .commandFailed(let response) = error else {
+                XCTFail("Expected commandFailed, got: \(error)")
+                return
+            }
+            XCTAssertEqual(response.status, .no)
+            XCTAssertFalse(response.line.isEmpty, "Expected a reconstructed server response line")
+            XCTAssertTrue(
+                response.isMailboxNotFound,
+                "Expected a mailbox-absent code; got code \(String(describing: response.code)), line: \(response.line)"
+            )
         }
     }
 
@@ -122,7 +177,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertFalse(unreadAfter.contains { $0.uid == summary.uid })
     }
 
-    func testMailboxStatusAndFetchBySequence() async throws {
+    func testMailboxStatusAndFetchByUID() async throws {
         let client = try await connectClient()
         defer { Task { await client.disconnect() } }
 
@@ -139,13 +194,13 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(status.uidNext, 0)
         XCTAssertGreaterThan(status.uidValidity, 0)
 
-        let sequenceNumbers = try await client.listMessages(in: mailbox)
-        guard let sequenceNumber = sequenceNumbers.first else {
-            XCTFail("Expected message sequence number")
+        let uids = try await client.listMessageUIDs(in: mailbox)
+        guard let uid = uids.first else {
+            XCTFail("Expected message UID")
             return
         }
 
-        let summary = try await client.fetchMessageBySequence(sequenceNumber: sequenceNumber, in: mailbox)
+        let summary = try await client.fetchMessage(uid: uid, in: mailbox)
         XCTAssertEqual(summary?.envelope?.subject, subject)
     }
 
@@ -341,15 +396,14 @@ final class GreenMailIntegrationTests: XCTestCase {
         try await client.storeFlags(uid: uidA, in: mailbox, flags: [.seen], action: .add)
         try await client.storeFlags(uid: uidB, in: mailbox, flags: [.seen, .flagged], action: .add)
 
-        let complexFiltered = try await client.searchMessagesComplex(
+        let complexFiltered = try await client.searchMessages(
             in: mailbox,
-            flags: [.seen],
-            excludeFlags: [.flagged]
+            matching: [.seen, .unflagged]
         )
         XCTAssertTrue(complexFiltered.contains { $0.uid == uidA })
         XCTAssertFalse(complexFiltered.contains { $0.uid == uidB })
 
-        let complexAll = try await client.searchMessagesComplex(in: mailbox)
+        let complexAll = try await client.searchMessages(in: mailbox, criteria: .all)
         XCTAssertGreaterThanOrEqual(complexAll.count, 2)
 
         let limited = try await client.searchMessages(in: mailbox, criteria: .all, limit: 1)
@@ -556,7 +610,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         XCTAssertEqual(remaining.count, 1)
     }
 
-    // MARK: - UID Search Tests (Issue #1)
+    // MARK: - UID Search Tests
 
     /// Test that listMessageUIDs returns stable UIDs that can be used for subsequent operations
     func testListMessageUIDsReturnsStableUIDs() async throws {
@@ -637,7 +691,7 @@ final class GreenMailIntegrationTests: XCTestCase {
         }
     }
 
-    // MARK: - Fetch UID Verification Tests (Issue #2)
+    // MARK: - Fetch UID Verification Tests
 
     /// Test that fetchMessage returns the correct message when multiple messages exist
     func testFetchMessageReturnsCorrectMessageByUID() async throws {

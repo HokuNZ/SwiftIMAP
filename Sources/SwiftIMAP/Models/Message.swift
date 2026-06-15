@@ -3,7 +3,7 @@ import Foundation
 public typealias UID = UInt32
 public typealias MessageSequenceNumber = UInt32
 
-public struct MessageSummary: Sendable {
+public struct MessageSummary: Sendable, Equatable {
     public let uid: UID
     public let sequenceNumber: MessageSequenceNumber
     /// The standard RFC 3501 system flags (see `Flag`).
@@ -14,10 +14,14 @@ public struct MessageSummary: Sendable {
     public let internalDate: Date
     public let size: UInt32
     public let envelope: Envelope?
-    /// The References header, containing message IDs for threading.
-    /// Populated when the fetch includes a `BODY[HEADER.FIELDS (REFERENCES)]`
-    /// item (with or without `.PEEK`).
-    public let references: String?
+    /// The `References` header parsed into normalised identifiers, oldest first
+    /// (the threading ancestry chain). Empty unless the fetch includes a
+    /// `BODY[HEADER.FIELDS (REFERENCES)]` item (with or without `.PEEK`).
+    ///
+    /// These compare directly against any `Envelope.messageId` / `inReplyTo`
+    /// without bracket handling. To re-emit the header, use
+    /// `.map(\.bracketed).joined(separator: " ")`.
+    public let references: [MessageId]
 
     public init(
         uid: UID,
@@ -27,7 +31,7 @@ public struct MessageSummary: Sendable {
         internalDate: Date,
         size: UInt32,
         envelope: Envelope? = nil,
-        references: String? = nil
+        references: [MessageId] = []
     ) {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
@@ -77,7 +81,7 @@ public enum AddressListEntry: Sendable, Hashable {
     case group(name: String, members: [Address])
 }
 
-public struct Envelope: Sendable {
+public struct Envelope: Sendable, Equatable {
     public let date: Date?
     public let subject: String?
     public let from: [Address]
@@ -92,8 +96,10 @@ public struct Envelope: Sendable {
     public let ccEntries: [AddressListEntry]
     public let bcc: [Address]
     public let bccEntries: [AddressListEntry]
-    public let inReplyTo: String?
-    public let messageID: String?
+    /// The parent message this is a reply to (`In-Reply-To`), normalised.
+    public let inReplyTo: MessageId?
+    /// This message's own identifier (`Message-ID`), normalised.
+    public let messageId: MessageId?
     
     public init(
         date: Date? = nil,
@@ -110,8 +116,8 @@ public struct Envelope: Sendable {
         ccEntries: [AddressListEntry]? = nil,
         bcc: [Address] = [],
         bccEntries: [AddressListEntry]? = nil,
-        inReplyTo: String? = nil,
-        messageID: String? = nil
+        inReplyTo: MessageId? = nil,
+        messageId: MessageId? = nil
     ) {
         self.date = date
         self.subject = subject
@@ -128,11 +134,11 @@ public struct Envelope: Sendable {
         self.bcc = bcc
         self.bccEntries = bccEntries ?? bcc.map { .mailbox($0) }
         self.inReplyTo = inReplyTo
-        self.messageID = messageID
+        self.messageId = messageId
     }
 }
 
-public struct BodyStructure: Sendable {
+public struct BodyStructure: Sendable, Equatable {
     public let type: String
     public let subtype: String
     public let parameters: [String: String]

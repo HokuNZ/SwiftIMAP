@@ -129,7 +129,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
 
     func testByeGreetingClosesConnection() async {
-        mockServer.setResponse(for: "GREETING", response: "* BYE Server shutting down")
+        mockServer.setResponse(for: "GREETING", response: "* BYE [ALERT] Server shutting down")
 
         let config = IMAPConfiguration(
             hostname: "localhost",
@@ -145,9 +145,13 @@ final class IMAPIntegrationTests: XCTestCase {
             try await client.connect()
             XCTFail("Expected BYE greeting to close connection")
         } catch {
-            guard case IMAPError.connectionClosed = error else {
-                return XCTFail("Expected connectionClosed error")
+            guard case IMAPError.connectionClosed(let response) = error else {
+                return XCTFail("Expected connectionClosed error, got: \(error)")
             }
+            XCTAssertEqual(response?.status, .bye)
+            XCTAssertEqual(response?.code, .alert)
+            XCTAssertEqual(response?.text, "Server shutting down")
+            XCTAssertEqual(response?.line, "BYE [ALERT] Server shutting down")
         }
 
         await client.disconnect()
@@ -350,7 +354,7 @@ final class IMAPIntegrationTests: XCTestCase {
     }
     
     // MARK: - Connection Tests
-    
+
     func testConnectionTimeout() async throws {
         // Create a client that connects to a non-existent server
         let config = IMAPConfiguration(
@@ -370,7 +374,7 @@ final class IMAPIntegrationTests: XCTestCase {
         } catch {
             if let imapError = error as? IMAPError {
                 switch imapError {
-                case .timeout, .connectionFailed, .connectionError:
+                case .timeout, .connectionFailed:
                     break
                 default:
                     XCTFail("Unexpected error: \(imapError)")
@@ -426,7 +430,7 @@ final class IMAPIntegrationTests: XCTestCase {
             * OK [UIDVALIDITY 1234567890]
             * OK [UIDNEXT 43]
             """)
-        mockServer.setResponse(for: "SEARCH ALL", response: """
+        mockServer.setResponse(for: "UID SEARCH ALL", response: """
             * SEARCH 1 2 3
             """)
         mockServer.setResponse(for: "UID FETCH", response: """
@@ -451,8 +455,8 @@ final class IMAPIntegrationTests: XCTestCase {
         XCTAssertEqual(selectStatus.recent, 1)
         
         // Search messages
-        let messageNumbers = try await client.listMessages(in: "INBOX")
-        XCTAssertEqual(messageNumbers, [1, 2, 3])
+        let messageUIDs = try await client.listMessageUIDs(in: "INBOX")
+        XCTAssertEqual(messageUIDs, [1, 2, 3])
         
         // Fetch message
         let message = try await client.fetchMessage(uid: 1, in: "INBOX")
@@ -486,31 +490,6 @@ final class IMAPIntegrationTests: XCTestCase {
         XCTAssertEqual(status.uidNext, 7)
         XCTAssertEqual(status.uidValidity, 42)
         XCTAssertEqual(status.unseen, 2)
-        await client.disconnect()
-    }
-
-    func testFetchMessageBySequenceReturnsSummary() async throws {
-        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
-        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "* 1 EXISTS")
-        mockServer.setResponse(for: "FETCH", response: """
-            * 2 FETCH (UID 99 FLAGS (\\Seen) INTERNALDATE "01-Jan-2024 12:00:00 +0000" RFC822.SIZE 1234 ENVELOPE ("Mon, 1 Jan 2024 12:00:00 +0000" "Seq Subject" (("Sender" NIL "sender" "example.com")) NIL NIL (("Recipient" NIL "recipient" "example.com")) NIL NIL NIL "<seq-id@example.com>"))
-            """)
-
-        let config = IMAPConfiguration(
-            hostname: "localhost",
-            port: serverPort,
-            tlsMode: .disabled,
-            authMethod: .login(username: "testuser", password: "testpass")
-        )
-
-        let client = IMAPClient(configuration: config)
-
-        try await client.connect()
-        let summary = try await client.fetchMessageBySequence(sequenceNumber: 2, in: "INBOX")
-        XCTAssertEqual(summary?.uid, 99)
-        XCTAssertEqual(summary?.sequenceNumber, 2)
-        XCTAssertEqual(summary?.envelope?.subject, "Seq Subject")
         await client.disconnect()
     }
 
@@ -589,31 +568,6 @@ final class IMAPIntegrationTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testExpungeFallsBackWithoutUidPlus() async throws {
-        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
-        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
-        mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
-        mockServer.setResponse(for: "EXPUNGE", response: "OK EXPUNGE completed")
-
-        let config = IMAPConfiguration(
-            hostname: "localhost",
-            port: serverPort,
-            tlsMode: .disabled,
-            authMethod: .login(username: "testuser", password: "testpass")
-        )
-
-        let client = IMAPClient(configuration: config)
-
-        try await client.connect()
-        try await client.expunge(uids: [3], in: "INBOX")
-
-        let commands = mockServer.receivedCommands.map { $0.uppercased() }
-        XCTAssertTrue(commands.contains { $0.contains("EXPUNGE") && !$0.contains("UID EXPUNGE") })
-        XCTAssertFalse(commands.contains { $0.contains("UID EXPUNGE") })
-
-        await client.disconnect()
-    }
-
     func testMoveMessagesUsesUidMoveWhenSupported() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 MOVE")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -660,7 +614,10 @@ final class IMAPIntegrationTests: XCTestCase {
 
         let commands = mockServer.receivedCommands.map { $0.uppercased() }
         XCTAssertTrue(commands.contains { $0.contains("UID COPY") })
-        XCTAssertEqual(commands.filter { $0.contains("UID STORE") }.count, 2)
+        // The fallback deletion is a single batched STORE for all UIDs.
+        let stores = commands.filter { $0.contains("UID STORE") }
+        XCTAssertEqual(stores.count, 1)
+        XCTAssertTrue(stores[0].contains("1,2"), "Batched \\Deleted STORE should carry both UIDs: \(stores[0])")
         XCTAssertFalse(commands.contains { $0.contains("UID MOVE") })
 
         await client.disconnect()
@@ -670,11 +627,11 @@ final class IMAPIntegrationTests: XCTestCase {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
         mockServer.setResponse(for: "SELECT \"INBOX\"", response: "OK [READ-WRITE] SELECT completed")
-        // searchMessages() now uses UID SEARCH and UID FETCH for stability
+        // searchMessages() now batches into a single UID SEARCH + UID FETCH, so
+        // the fetch returns both messages in one response (the client filters to
+        // the UIDs it requested, so a limit: 1 fetch still yields one summary).
         mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH 10 20")
-        // Set specific responses for each UID fetch (more realistic mock behavior)
-        mockServer.setResponse(for: "UID FETCH 10", response: "* 1 FETCH (UID 10 FLAGS (\\Seen) INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 100 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"Search Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<search-id@example.com>\"))")
-        mockServer.setResponse(for: "UID FETCH 20", response: "* 2 FETCH (UID 20 FLAGS () INTERNALDATE \"02-Jan-2024 12:00:00 +0000\" RFC822.SIZE 200 ENVELOPE (\"Tue, 2 Jan 2024 12:00:00 +0000\" \"Another Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<search-id2@example.com>\"))")
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 10 FLAGS (\\Seen) INTERNALDATE \"01-Jan-2024 12:00:00 +0000\" RFC822.SIZE 100 ENVELOPE (\"Mon, 1 Jan 2024 12:00:00 +0000\" \"Search Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<search-id@example.com>\"))\r\n* 2 FETCH (UID 20 FLAGS () INTERNALDATE \"02-Jan-2024 12:00:00 +0000\" RFC822.SIZE 200 ENVELOPE (\"Tue, 2 Jan 2024 12:00:00 +0000\" \"Another Subject\" ((\"Sender\" NIL \"sender\" \"example.com\")) NIL NIL ((\"Recipient\" NIL \"recipient\" \"example.com\")) NIL NIL NIL \"<search-id2@example.com>\"))")
 
         let config = IMAPConfiguration(
             hostname: "localhost",
@@ -717,16 +674,13 @@ final class IMAPIntegrationTests: XCTestCase {
         let flaggedMatches = try await client.searchFlaggedMessages(in: "INBOX")
         XCTAssertEqual(flaggedMatches.count, 2)
 
-        let complexMatches = try await client.searchMessagesComplex(
+        let complexMatches = try await client.searchMessages(
             in: "INBOX",
-            from: "sender@example.com",
-            subject: "Search Subject",
-            flags: [.seen],
-            excludeFlags: [.flagged]
+            matching: [.from("sender@example.com"), .subject("Search Subject"), .seen, .unflagged]
         )
         XCTAssertEqual(complexMatches.count, 2)
 
-        let complexAll = try await client.searchMessagesComplex(in: "INBOX")
+        let complexAll = try await client.searchMessages(in: "INBOX", criteria: .all)
         XCTAssertEqual(complexAll.count, 2)
 
         await client.disconnect()
@@ -932,247 +886,3 @@ final class IMAPIntegrationTests: XCTestCase {
     }
 }
 
-// MARK: - Mock IMAP Server
-
-/// Mock IMAP server used by the in-process integration tests. State touched by
-/// both the test thread (set/asserted) and the NIO event loop (handler
-/// callbacks) lives in the `_`-prefixed properties below, serialised via
-/// `lock`. `channel` is only touched from the test task (start/shutdown). See
-/// #21 for the failure mode this fixes.
-class MockIMAPServer {
-    private let lock = NIOLock()
-    private let eventLoopGroup: EventLoopGroup
-    private var channel: Channel?
-
-    private var _responses: [String: String] = [:]
-    private var _authenticateResponse: String?
-    private var _authenticateChallenges: [String] = []
-    private var _pendingAuthTag: String?
-    private var _pendingAuthChallenges: [String] = []
-    private var _receivedCommands: [String] = []
-    private var _receivedContinuations: [String] = []
-
-    var receivedCommands: [String] {
-        lock.withLock { Array(_receivedCommands) }
-    }
-
-    var receivedContinuations: [String] {
-        lock.withLock { Array(_receivedContinuations) }
-    }
-
-    var isAwaitingContinuation: Bool {
-        lock.withLock { _pendingAuthTag != nil }
-    }
-
-    init(eventLoopGroup: EventLoopGroup) {
-        self.eventLoopGroup = eventLoopGroup
-        _responses["GREETING"] = "* OK Mock IMAP Server Ready"
-    }
-
-    func setResponse(for command: String, response: String) {
-        lock.withLock { _responses[command] = response }
-    }
-
-    func setAuthenticateResponse(_ response: String) {
-        lock.withLock { _authenticateResponse = response }
-    }
-
-    func setAuthenticateChallenges(_ challenges: [String]) {
-        lock.withLock { _authenticateChallenges = challenges }
-    }
-
-    func greeting() -> String {
-        lock.withLock { _responses["GREETING"] ?? "* OK Ready" }
-    }
-
-    func start() async throws -> Int {
-        let bootstrap = ServerBootstrap(group: eventLoopGroup)
-            .serverChannelOption(ChannelOptions.backlog, value: 256)
-            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-            .childChannelInitializer { channel in
-                channel.pipeline.addHandlers([
-                    ByteToMessageHandler(MockIMAPDecoder()),
-                    MessageToByteHandler(MockIMAPEncoder()),
-                    MockIMAPHandler(server: self)
-                ])
-            }
-
-        channel = try await bootstrap.bind(host: "localhost", port: 0).get()
-        guard let localAddress = channel?.localAddress,
-              let port = localAddress.port else {
-            throw IMAPError.connectionError("Failed to get server port")
-        }
-
-        return port
-    }
-
-    func shutdown() async throws {
-        try await channel?.close()
-    }
-
-    func handleCommand(_ command: String) -> String {
-        lock.withLock { handleCommandLocked(command) }
-    }
-
-    private func handleCommandLocked(_ command: String) -> String {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        _receivedCommands.append(trimmed)
-
-        if let pendingTag = _pendingAuthTag {
-            _receivedContinuations.append(trimmed)
-            if !_pendingAuthChallenges.isEmpty {
-                let challenge = _pendingAuthChallenges.removeFirst()
-                return challenge.isEmpty ? "+" : "+ \(challenge)"
-            }
-            _pendingAuthTag = nil
-            return formatAuthenticateResponseLocked(tag: pendingTag)
-        }
-
-        guard !trimmed.isEmpty else {
-            return "* BAD Empty command"
-        }
-
-        let parts = trimmed.split(separator: " ", maxSplits: 2)
-        guard parts.count >= 2 else {
-            return ""
-        }
-
-        let tagCandidate = String(parts[0])
-        let isTagged = tagCandidate.range(of: #"^[A-Za-z0-9]+$"#, options: .regularExpression) != nil
-        guard isTagged else {
-            return ""
-        }
-
-        let tag = tagCandidate
-        let cmd = String(parts[1]).uppercased()
-        let remainder = parts.count > 2 ? String(parts[2]) : ""
-        let commandAndArgs = String(trimmed.dropFirst(tag.count + 1))
-        let remainderParts = remainder.split(separator: " ", maxSplits: 1)
-        let subcommandKey = remainderParts.first.map { "\(cmd) \(String($0))" }
-
-        if cmd == "AUTHENTICATE" {
-            let remainderParts = remainder.split(separator: " ", maxSplits: 1)
-            let mechanism = remainderParts.first.map { String($0).uppercased() } ?? ""
-            let hasInitialResponse = remainderParts.count > 1
-
-            if !_authenticateChallenges.isEmpty {
-                _pendingAuthTag = tag
-                _pendingAuthChallenges = _authenticateChallenges
-                let challenge = _pendingAuthChallenges.removeFirst()
-                return challenge.isEmpty ? "+" : "+ \(challenge)"
-            }
-
-            if hasInitialResponse {
-                return formatAuthenticateResponseLocked(tag: tag)
-            }
-
-            _pendingAuthTag = tag
-            return _responses["AUTHENTICATE \(mechanism)"] ?? "+"
-        }
-
-        let prefixMatch = _responses.keys.first { key in
-            commandAndArgs.uppercased().hasPrefix(key.uppercased())
-        }.flatMap { _responses[$0] }
-
-        if let response = _responses[commandAndArgs]
-            ?? _responses[commandAndArgs.uppercased()]
-            ?? prefixMatch
-            ?? subcommandKey.flatMap({ _responses[$0] ?? _responses[$0.uppercased()] })
-            ?? _responses[cmd] {
-            if response.hasPrefix("*") || response.hasPrefix("+") {
-                return "\(response)\r\n\(tag) OK \(cmd) completed"
-            }
-
-            let upper = response.uppercased()
-            if upper.hasPrefix("OK") || upper.hasPrefix("NO") || upper.hasPrefix("BAD") {
-                return "\(tag) \(response)"
-            }
-
-            return "\(tag) OK \(response)"
-        }
-
-        return "\(tag) OK \(cmd) completed"
-    }
-
-    private func formatAuthenticateResponseLocked(tag: String) -> String {
-        let response = _authenticateResponse ?? "OK AUTHENTICATE completed"
-
-        if response.hasPrefix("*") {
-            return "\(response)\r\n\(tag) OK AUTHENTICATE completed"
-        }
-
-        if response.uppercased().hasPrefix("\(tag) ") {
-            return response
-        }
-
-        return "\(tag) \(response)"
-    }
-}
-
-// MARK: - Mock IMAP Codec
-
-class MockIMAPDecoder: ByteToMessageDecoder {
-    typealias InboundOut = String
-    
-    func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        let view = buffer.readableBytesView
-        guard let lfIndex = view.firstIndex(of: UInt8(ascii: "\n")) else {
-            return .needMoreData
-        }
-        
-        let length = view.distance(from: view.startIndex, to: lfIndex) + 1
-        guard var lineBuffer = buffer.readSlice(length: length),
-              let line = lineBuffer.readString(length: lineBuffer.readableBytes) else {
-            return .needMoreData
-        }
-        
-        context.fireChannelRead(wrapInboundOut(line))
-        return .continue
-    }
-}
-
-class MockIMAPEncoder: MessageToByteEncoder {
-    typealias OutboundIn = String
-    
-    func encode(data: String, out: inout ByteBuffer) throws {
-        let normalized = data.replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\n", with: "\r\n")
-        out.writeString(normalized)
-        if !normalized.hasSuffix("\r\n") {
-            out.writeString("\r\n")
-        }
-    }
-}
-
-class MockIMAPHandler: ChannelInboundHandler {
-    typealias InboundIn = String
-    typealias OutboundOut = String
-    
-    private weak var server: MockIMAPServer?
-    private var hasGreeted = false
-    
-    init(server: MockIMAPServer) {
-        self.server = server
-    }
-    
-    func channelActive(context: ChannelHandlerContext) {
-        let greeting = server?.greeting() ?? "* OK Ready"
-        context.writeAndFlush(wrapOutboundOut(greeting), promise: nil)
-        hasGreeted = true
-    }
-    
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let rawCommand = unwrapInboundIn(data)
-        let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        if command.isEmpty && (server?.isAwaitingContinuation != true) {
-            return
-        }
-        
-        if let response = server?.handleCommand(rawCommand) {
-            if response.isEmpty {
-                return
-            }
-            context.writeAndFlush(wrapOutboundOut(response), promise: nil)
-        }
-    }
-}

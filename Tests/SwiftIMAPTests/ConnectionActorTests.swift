@@ -48,8 +48,8 @@ final class ConnectionActorTests: XCTestCase {
             try await connection.startTLS()
             XCTFail("Expected startTLS to throw")
         } catch {
-            guard case IMAPError.disconnected = error else {
-                return XCTFail("Expected disconnected error")
+            guard case IMAPError.connectionClosed(nil) = error else {
+                return XCTFail("Expected connectionClosed(nil), got: \(error)")
             }
         }
     }

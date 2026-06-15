@@ -10,12 +10,16 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
         return IMAPClient(configuration: config)
     }
 
+    private func ids(_ values: String...) -> [MessageId] {
+        values.map { MessageId(parsing: $0)! }
+    }
+
     func testParsesSingleReference() {
         let client = makeClient()
         let raw = "References: <abc@example.com>\r\n\r\n"
         let data = Data(raw.utf8)
 
-        XCTAssertEqual(client.parseReferencesHeader(from: data), "<abc@example.com>")
+        XCTAssertEqual(client.parseReferencesHeader(from: data), ids("abc@example.com"))
     }
 
     func testParsesMultipleReferencesOnSingleLine() {
@@ -25,7 +29,7 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
 
         XCTAssertEqual(
             client.parseReferencesHeader(from: data),
-            "<a@example.com> <b@example.com> <c@example.com>"
+            ids("a@example.com", "b@example.com", "c@example.com")
         )
     }
 
@@ -36,7 +40,7 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
 
         XCTAssertEqual(
             client.parseReferencesHeader(from: data),
-            "<a@example.com> <b@example.com> <c@example.com>"
+            ids("a@example.com", "b@example.com", "c@example.com")
         )
     }
 
@@ -47,24 +51,24 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
 
         XCTAssertEqual(
             client.parseReferencesHeader(from: data),
-            "<a@example.com> <b@example.com>"
+            ids("a@example.com", "b@example.com")
         )
     }
 
-    func testReturnsNilWhenHeaderMissing() {
+    func testReturnsEmptyWhenHeaderMissing() {
         let client = makeClient()
         let raw = "Subject: Hello\r\n\r\n"
         let data = Data(raw.utf8)
 
-        XCTAssertNil(client.parseReferencesHeader(from: data))
+        XCTAssertEqual(client.parseReferencesHeader(from: data), [])
     }
 
-    func testReturnsNilForEmptyValue() {
+    func testReturnsEmptyForEmptyValue() {
         let client = makeClient()
         let raw = "References: \r\n\r\n"
         let data = Data(raw.utf8)
 
-        XCTAssertNil(client.parseReferencesHeader(from: data))
+        XCTAssertEqual(client.parseReferencesHeader(from: data), [])
     }
 
     func testIgnoresOtherHeadersAndPicksReferences() {
@@ -80,7 +84,7 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
 
         XCTAssertEqual(
             client.parseReferencesHeader(from: data),
-            "<a@example.com> <b@example.com>"
+            ids("a@example.com", "b@example.com")
         )
     }
 
@@ -89,7 +93,7 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
         let raw = "REFERENCES: <a@example.com>\r\n\r\n"
         let data = Data(raw.utf8)
 
-        XCTAssertEqual(client.parseReferencesHeader(from: data), "<a@example.com>")
+        XCTAssertEqual(client.parseReferencesHeader(from: data), ids("a@example.com"))
     }
 
     func testFallsBackToISOLatin1ForNonUTF8Data() {
@@ -105,6 +109,6 @@ final class IMAPClientReferencesHeaderTests: XCTestCase {
 
         // UTF-8 decoding should fail, so this exercises the ISO-8859-1 fallback.
         XCTAssertNil(String(data: data, encoding: .utf8))
-        XCTAssertEqual(client.parseReferencesHeader(from: data), "<é@example.com>")
+        XCTAssertEqual(client.parseReferencesHeader(from: data), ids("é@example.com"))
     }
 }

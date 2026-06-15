@@ -42,19 +42,59 @@ extension IMAPClient {
             uids
         }
 
-        // Fetch details for each message by UID (stable identifier)
-        var summaries: [MessageSummary] = []
-        for uid in uidsToFetch {
-            if let summary = try await fetchMessage(uid: uid, in: mailbox, items: fetchItems) {
-                summaries.append(summary)
-            } else {
-                // Message may have been deleted between search and fetch - this is expected
-                // in concurrent access scenarios and is why we use UIDs (to avoid wrong message)
-                logger.debug("UID \(uid) not found during fetch - message may have been deleted")
-            }
+        // A limit of 0 (or a non-positive limit) yields an empty set; return
+        // early rather than building a SequenceSet from [] (which traps).
+        guard !uidsToFetch.isEmpty else {
+            return []
         }
 
-        return summaries
+        // Fetch all matching messages in a single UID FETCH rather than one round
+        // trip per UID. Reconnect-and-retry is safe (a fetch is an idempotent
+        // read), matching fetchMessage.
+        return try await retryHandler.executeWithReconnect(
+            operation: "searchMessages.fetch",
+            needsReconnect: { error in
+                (error as? IMAPError)?.requiresReconnection ?? false
+            },
+            reconnect: {
+                try await self.connect()
+            },
+            work: {
+                _ = try await self.selectMailbox(mailbox)
+
+                // Ensure the summary's required attributes are fetched from a
+                // reduced item set; UID also maps each response back to its
+                // requested UID (responses may arrive in any order, and a UID may
+                // be absent if the message was deleted between search and fetch).
+                let items = IMAPClient.summaryFetchItems(fetchItems)
+
+                let responses = try await self.connection.sendCommand(
+                    .uid(.fetch(sequence: .set(uidsToFetch), items: items))
+                )
+
+                var byUID: [UID: MessageSummary] = [:]
+                for response in responses {
+                    guard case let .untagged(.fetch(seqNum, attributes)) = response else { continue }
+                    let responseUID = attributes.compactMap { attribute -> UID? in
+                        if case .uid(let fetchedUID) = attribute { return fetchedUID }
+                        return nil
+                    }.first
+                    guard let responseUID else {
+                        self.logger.warning("FETCH response missing UID attribute during searchMessages")
+                        continue
+                    }
+                    byUID[responseUID] = try self.parseMessageSummary(sequenceNumber: seqNum, attributes: attributes)
+                }
+
+                // Preserve the requested order; drop UIDs the server did not return
+                // (deleted between search and fetch — expected under concurrent access).
+                return uidsToFetch.compactMap { uid in
+                    if let summary = byUID[uid] { return summary }
+                    self.logger.debug("UID \(uid) not found during fetch - message may have been deleted")
+                    return nil
+                }
+            }
+        )
     }
 
     /// Convenience method to search by multiple criteria using AND
@@ -125,75 +165,5 @@ extension IMAPClient {
         limit: Int? = nil
     ) async throws -> [MessageSummary] {
         try await searchMessages(in: mailbox, criteria: .flagged, limit: limit)
-    }
-
-    /// Search with complex criteria combining multiple conditions
-    public func searchMessagesComplex(
-        in mailbox: String,
-        from sender: String? = nil,
-        to recipient: String? = nil,
-        subject: String? = nil,
-        text: String? = nil,
-        since: Date? = nil,
-        before: Date? = nil,
-        flags: Set<Flag>? = nil,
-        excludeFlags: Set<Flag>? = nil,
-        limit: Int? = nil
-    ) async throws -> [MessageSummary] {
-        var criteria: [IMAPCommand.SearchCriteria] = []
-
-        if let sender = sender {
-            criteria.append(.from(sender))
-        }
-        if let recipient = recipient {
-            criteria.append(.to(recipient))
-        }
-        if let subject = subject {
-            criteria.append(.subject(subject))
-        }
-        if let text = text {
-            criteria.append(.text(text))
-        }
-        if let since = since {
-            criteria.append(.since(since))
-        }
-        if let before = before {
-            criteria.append(.before(before))
-        }
-
-        // Add flag criteria
-        if let flags = flags {
-            for flag in flags {
-                switch flag {
-                case .seen: criteria.append(.seen)
-                case .answered: criteria.append(.answered)
-                case .flagged: criteria.append(.flagged)
-                case .deleted: criteria.append(.deleted)
-                case .draft: criteria.append(.draft)
-                case .recent: criteria.append(.recent)
-                }
-            }
-        }
-
-        // Add excluded flag criteria
-        if let excludeFlags = excludeFlags {
-            for flag in excludeFlags {
-                switch flag {
-                case .seen: criteria.append(.unseen)
-                case .answered: criteria.append(.unanswered)
-                case .flagged: criteria.append(.unflagged)
-                case .deleted: criteria.append(.undeleted)
-                case .draft: criteria.append(.undraft)
-                case .recent: criteria.append(.not(.recent))
-                }
-            }
-        }
-
-        // If no criteria specified, search all
-        if criteria.isEmpty {
-            criteria.append(.all)
-        }
-
-        return try await searchMessages(in: mailbox, matching: criteria, limit: limit)
     }
 }

@@ -77,6 +77,7 @@ public struct RetryConfiguration: Sendable {
         jitter: Double = 0.1,
         retryableErrors: Set<RetryableError> = .default
     ) {
+        precondition(maxAttempts >= 1, "RetryConfiguration.maxAttempts must be at least 1 (got \(maxAttempts)); a retry loop must run at least once.")
         self.maxAttempts = maxAttempts
         self.initialDelay = initialDelay
         self.maxDelay = maxDelay

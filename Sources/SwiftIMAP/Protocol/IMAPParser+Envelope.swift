@@ -17,7 +17,7 @@ extension IMAPParser {
         var rawDate: Data?
         var rawSubject: Data?
         var rawInReplyTo: Data?
-        var rawMessageID: Data?
+        var rawMessageId: Data?
 
         let date = try parseNilOrQuotedString(scanner, literalData: &rawDate)
         let subject = try parseNilOrQuotedString(scanner, literalData: &rawSubject)
@@ -28,7 +28,7 @@ extension IMAPParser {
         let cc = try parseAddressList(scanner)
         let bcc = try parseAddressList(scanner)
         let inReplyTo = try parseNilOrQuotedString(scanner, literalData: &rawInReplyTo)
-        let messageID = try parseNilOrQuotedString(scanner, literalData: &rawMessageID)
+        let messageId = try parseNilOrQuotedString(scanner, literalData: &rawMessageId)
 
         guard scanner.scanString(")") != nil else {
             throw IMAPError.parsingError("Expected closing parenthesis for envelope")
@@ -44,11 +44,11 @@ extension IMAPParser {
             cc: cc,
             bcc: bcc,
             inReplyTo: inReplyTo,
-            messageID: messageID,
+            messageId: messageId,
             rawDate: rawDate,
             rawSubject: rawSubject,
             rawInReplyTo: rawInReplyTo,
-            rawMessageID: rawMessageID
+            rawMessageId: rawMessageId
         )
     }
 

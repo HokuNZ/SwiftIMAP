@@ -2,17 +2,8 @@ import XCTest
 @testable import SwiftIMAP
 
 final class MIMEParsingAdditionalTests: XCTestCase {
-    func testParseMimeContentRejectsNonUtf8() {
-        let bodyData = Data([0xFF, 0xFE, 0xFD])
-        let summary = makeSummary()
-
-        XCTAssertThrowsError(try summary.parseMimeContent(from: bodyData)) { error in
-            guard case IMAPError.parsingError(let message) = error else {
-                return XCTFail("Expected parsingError")
-            }
-            XCTAssertTrue(message.contains("UTF-8"))
-        }
-    }
+    // The ISO-8859-1 decode fallback for non-UTF-8 bodies is covered by
+    // MIMEParsingTests.testParseMimeContentDecodesNonUTF8BodyViaLatin1.
 
     func testHeadersAndTransferEncodingCaptured() throws {
         let messageData = """
@@ -27,7 +18,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
 
         XCTAssertEqual(parsed?.headers["x-custom"], "CustomValue")
         XCTAssertEqual(parsed?.charset, "iso-8859-1")
@@ -36,8 +27,8 @@ final class MIMEParsingAdditionalTests: XCTestCase {
     }
 
     func testInlinePartWithFilenameIsAttachment() throws {
-        // Issue #5: Inline parts WITH a filename should be treated as attachments
-        // (e.g., Apple Mail marks PDF attachments as inline with filename)
+        // Inline parts WITH a filename are treated as attachments
+        // (e.g. Apple Mail marks PDF attachments as inline with a filename).
         let messageData = """
         From: sender@example.com
         To: recipient@example.com
@@ -50,7 +41,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.mimeType, "image/png")
@@ -84,7 +75,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let inlinePart = parsed?.parts.first { $0.contentID != nil }
 
         XCTAssertNotNil(inlinePart)
@@ -106,7 +97,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.mimeType, "application/pdf")
@@ -127,7 +118,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.decodedText, "NotBase64!!")
@@ -158,7 +149,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let imagePart = parsed?.parts.first { $0.contentID != nil }
 
         XCTAssertNotNil(imagePart)
@@ -170,7 +161,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
     }
 
     func testAppleMailInlinePdfIsAttachment() throws {
-        // Real-world case from issue #5: Apple Mail marks PDFs as inline with filename
+        // Real-world case: Apple Mail marks PDFs as inline with a filename.
         let messageData = """
         From: sender@example.com
         To: recipient@example.com
@@ -183,7 +174,7 @@ final class MIMEParsingAdditionalTests: XCTestCase {
         """.data(using: .utf8)!
 
         let summary = makeSummary()
-        let parsed = try summary.parseMimeContent(from: messageData)
+        let parsed = try summary.parseMIMEContent(from: messageData)
         let part = parsed?.parts.first
 
         XCTAssertEqual(part?.filename, "document.pdf")

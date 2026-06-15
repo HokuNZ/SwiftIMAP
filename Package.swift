@@ -49,6 +49,18 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
         ),
+        // Runnable examples. Built (and therefore compile-checked) by `swift build`,
+        // but not exposed as package products, so consumers don't pull them in.
+        .executableTarget(
+            name: "BasicUsageExample",
+            dependencies: ["SwiftIMAP"],
+            path: "Examples/BasicUsage"
+        ),
+        .executableTarget(
+            name: "OfflineParsingExample",
+            dependencies: ["SwiftIMAP"],
+            path: "Examples/OfflineParsing"
+        ),
         .testTarget(
             name: "SwiftIMAPTests",
             dependencies: [

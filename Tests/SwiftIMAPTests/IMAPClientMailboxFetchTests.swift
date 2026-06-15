@@ -117,16 +117,16 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testListMessagesWithCharsetReturnsEmpty() async throws {
+    func testListMessageUIDsWithCharsetReturnsEmpty() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
         mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
-        mockServer.setResponse(for: "SEARCH", response: "* SEARCH")
+        mockServer.setResponse(for: "UID SEARCH", response: "* SEARCH")
 
         let client = makeClient()
         try await client.connect()
 
-        let results = try await client.listMessages(
+        let results = try await client.listMessageUIDs(
             in: "INBOX",
             searchCriteria: .header(field: "Subject", value: "Test"),
             charset: "UTF-8"
@@ -134,7 +134,8 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         XCTAssertTrue(results.isEmpty)
 
         let commands = mockServer.receivedCommands.map { $0.uppercased() }
-        XCTAssertTrue(commands.contains { $0.contains("SEARCH") && $0.contains("CHARSET") })
+        XCTAssertTrue(commands.contains { $0.contains("UID SEARCH") && $0.contains("CHARSET") },
+                      "Charset must propagate on the UID SEARCH command")
         XCTAssertTrue(commands.contains { $0.contains("UTF-8") })
 
         await client.disconnect()
@@ -236,6 +237,73 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
+    /// A reduced item set still yields a complete summary: the required
+    /// attributes (UID, internal date, size) are auto-added to the fetch, so the
+    /// caller never hits a "missing required attributes" parse failure.
+    func testFetchWithReducedItemSetAutoAddsSummaryAttributes() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(
+            for: "UID FETCH",
+            response: "* 1 FETCH (UID 1 FLAGS (\\Seen) " +
+                      "INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" RFC822.SIZE 42)"
+        )
+
+        let client = makeClient()
+        try await client.connect()
+
+        // Caller requests only flags; UID/INTERNALDATE/RFC822.SIZE are added.
+        let summary = try await client.fetchMessage(uid: 1, in: "INBOX", items: [.flags])
+
+        XCTAssertNotNil(summary, "A reduced item set must still yield a summary, not a parse failure")
+        XCTAssertEqual(summary?.uid, 1)
+        XCTAssertEqual(summary?.size, 42)
+
+        let fetch = mockServer.receivedCommands.first { $0.uppercased().contains("UID FETCH") } ?? ""
+        let upper = fetch.uppercased()
+        // Assert UID is in the fetch item list (inside the parens), not just the
+        // "UID FETCH" verb — `contains("UID")` would pass on the verb alone.
+        XCTAssertTrue(upper.contains("(UID"), "auto-added UID in item list: \(fetch)")
+        XCTAssertTrue(upper.contains("INTERNALDATE"), "auto-added INTERNALDATE: \(fetch)")
+        XCTAssertTrue(upper.contains("RFC822.SIZE"), "auto-added RFC822.SIZE: \(fetch)")
+
+        await client.disconnect()
+    }
+
+    /// `summaryFetchItems` adds the missing required attributes, never duplicates
+    /// present ones, and treats the ALL/FAST/FULL macros as already covering
+    /// INTERNALDATE/RFC822.SIZE (adding only UID, which no macro includes).
+    func testSummaryFetchItemsAddsMissingWithoutDuplicating() {
+        func count(_ items: [IMAPCommand.FetchItem], _ test: (IMAPCommand.FetchItem) -> Bool) -> Int {
+            items.filter(test).count
+        }
+        let isUID: (IMAPCommand.FetchItem) -> Bool = { if case .uid = $0 { return true }; return false }
+        let isDate: (IMAPCommand.FetchItem) -> Bool = { if case .internalDate = $0 { return true }; return false }
+        let isSize: (IMAPCommand.FetchItem) -> Bool = { if case .rfc822Size = $0 { return true }; return false }
+
+        // Reduced set: all three required attributes are added.
+        let fromFlags = IMAPClient.summaryFetchItems([.flags])
+        XCTAssertEqual(count(fromFlags, isUID), 1)
+        XCTAssertEqual(count(fromFlags, isDate), 1)
+        XCTAssertEqual(count(fromFlags, isSize), 1)
+
+        // Partial set: items already present are not duplicated.
+        let fromUIDFlags = IMAPClient.summaryFetchItems([.uid, .flags])
+        XCTAssertEqual(count(fromUIDFlags, isUID), 1, "UID must not be duplicated")
+        XCTAssertEqual(count(fromUIDFlags, isDate), 1)
+        XCTAssertEqual(count(fromUIDFlags, isSize), 1)
+
+        // Macro covers date/size; only UID is added (no redundant explicit items).
+        let fromAll = IMAPClient.summaryFetchItems([.all])
+        XCTAssertEqual(count(fromAll, isUID), 1)
+        XCTAssertEqual(count(fromAll, isDate), 0, "ALL already covers INTERNALDATE")
+        XCTAssertEqual(count(fromAll, isSize), 0, "ALL already covers RFC822.SIZE")
+
+        // Complete set is unchanged.
+        XCTAssertEqual(IMAPClient.summaryFetchItems([.uid, .internalDate, .rfc822Size, .flags]).count, 4)
+    }
+
     func testFetchMessageWithoutCustomKeywordsHasEmptyKeywords() async throws {
         mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
         mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
@@ -261,12 +329,12 @@ final class IMAPClientMailboxFetchTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testListMessagesThrowsWhenDisconnected() async {
+    func testListMessageUIDsThrowsWhenDisconnected() async {
         let client = makeClient()
 
         do {
-            _ = try await client.listMessages(in: "INBOX")
-            XCTFail("Expected listMessages to throw when disconnected")
+            _ = try await client.listMessageUIDs(in: "INBOX")
+            XCTFail("Expected listMessageUIDs to throw when disconnected")
         } catch {
             guard case IMAPError.invalidState(let message) = error else {
                 return XCTFail("Expected invalidState error")

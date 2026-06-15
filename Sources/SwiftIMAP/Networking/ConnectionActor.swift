@@ -84,7 +84,12 @@ actor ConnectionActor {
     private var pendingContinuationTag: String?
     private var connectionState: ConnectionState = .disconnected
     private var serverCapabilities: Set<String> = []
-    
+    // The code/text of an unsolicited mid-session `* BYE`, captured so that when the
+    // connection then drops, pending commands fail with the server's stated reason
+    // rather than a generic `disconnected`. Only surfaced at teardown, so it never
+    // interferes with a `* BYE` that legitimately precedes a LOGOUT completion.
+    private var pendingBye: (code: IMAPResponse.ResponseCode?, text: String?)?
+
     private struct PendingCommand {
         let command: IMAPCommand
         let continuation: CheckedContinuation<[IMAPResponse], Error>
@@ -108,11 +113,27 @@ actor ConnectionActor {
         self.logger = Logger(label: "ConnectionActor", level: configuration.logLevel)
     }
     
+    func isHealthy() -> Bool {
+        switch connectionState {
+        case .authenticated, .selected:
+            return channel?.isActive == true
+        case .connected, .connecting, .disconnected:
+            return false
+        }
+    }
+
     func connect() async throws -> IMAPResponse {
+        if connectionState != .disconnected, connectionState != .connecting,
+           channel?.isActive != true {
+            // Reset here so reconnecting does not require a manual disconnect() first
+            connectionState = .disconnected
+            await cleanup()
+        }
+
         guard case .disconnected = connectionState else {
             throw IMAPError.invalidState("Already connected or connecting")
         }
-        
+
         connectionState = .connecting
         
         do {
@@ -124,7 +145,7 @@ actor ConnectionActor {
             
             // No response handler installed yet — waitForGreeting will install one below.
             // IMAPChannelHandler buffers any bytes that arrive in the meantime, so the
-            // greeting cannot be dropped if the server beats us to setResponseHandler (#21).
+            // greeting cannot be dropped if the server beats us to setResponseHandler
             
             let tlsConfig = self.tlsConfiguration
             let imapConfig = self.configuration
@@ -153,7 +174,7 @@ actor ConnectionActor {
             connectionState = .connected
             
             let greeting = try await waitForGreeting()
-            logger.log(level: .debug, "Received greeting: \(greeting)")
+            logger.log(level: .debug, "Received greeting: \(greeting.loggingDescription)")
             
             if case .untagged(.status(.preauth(_, _))) = greeting {
                 connectionState = .authenticated
@@ -167,10 +188,15 @@ actor ConnectionActor {
             }
             
             return greeting
+        } catch let error as IMAPError {
+            // Preserve typed IMAP errors (e.g. timeout(command:), connectionClosed)
+            connectionState = .disconnected
+            await cleanup()
+            throw error
         } catch {
             connectionState = .disconnected
             await cleanup()
-            throw IMAPError.connectionFailed(error.localizedDescription)
+            throw IMAPError.connectionFailed(error.localizedDescription, underlying: error)
         }
     }
     
@@ -178,23 +204,31 @@ actor ConnectionActor {
         guard connectionState != .disconnected else { return }
         
         if let channel = channel {
-            try? await channel.close()
+            do {
+                try await channel.close()
+            } catch {
+                // Teardown continues regardless (we still reset state and clean
+                // up below), but a channel that fails to close — most likely on
+                // the wedged/dead-channel path that bounded disconnect() targets
+                // — should be diagnosable rather than silently swallowed.
+                logger.debug("Channel close during disconnect failed (continuing teardown): \(error.localizedDescription)")
+            }
         }
-        
+
         connectionState = .disconnected
         await cleanup()
     }
     
     func startTLS() async throws {
         guard let channel = channel else {
-            throw IMAPError.disconnected
+            throw IMAPError.connectionClosed(nil)
         }
         
         do {
             let sslHandler = try makeTLSHandler(hostname: configuration.hostname)
             try await channel.pipeline.addHandler(sslHandler, position: .first).get()
         } catch {
-            throw IMAPError.tlsError(error.localizedDescription)
+            throw IMAPError.tlsError(error.localizedDescription, underlying: error)
         }
     }
     
@@ -261,7 +295,13 @@ actor ConnectionActor {
     }
     
     private func updateCapabilities(_ caps: Set<String>) async {
-        serverCapabilities = caps
+        serverCapabilities = ConnectionActor.normalised(caps)
+    }
+
+    /// IMAP capability tokens are case-insensitive (RFC 3501 §7.2.1)
+    /// Normalise to upper case at the cache boundary
+    private static func normalised(_ caps: some Sequence<String>) -> Set<String> {
+        Set(caps.map { $0.uppercased() })
     }
     
     private func setupChannelPipeline(channel: Channel, handler: IMAPChannelHandler) -> EventLoopFuture<Void> {
@@ -277,6 +317,13 @@ actor ConnectionActor {
     private func nextTag() -> String {
         commandTag += 1
         return String(format: "A%04d", commandTag)
+    }
+
+    /// Convert a timeout in seconds to nanoseconds, clamped to a non-negative, finite value.
+    private static func nanoseconds(fromSeconds seconds: TimeInterval) -> UInt64 {
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        let nanos = seconds * 1_000_000_000
+        return nanos >= Double(UInt64.max) ? UInt64.max : UInt64(nanos)
     }
 
     private func mapSessionState() -> IMAPSessionState {
@@ -305,7 +352,7 @@ actor ConnectionActor {
             let encoded = try encoder.encodeCommandSegments(command, literalMode: literalMode)
             
             guard let channel = channel else {
-                continuation.resume(throwing: IMAPError.disconnected)
+                continuation.resume(throwing: IMAPError.connectionClosed(nil))
                 return
             }
 
@@ -341,7 +388,7 @@ actor ConnectionActor {
                 pendingContinuationTag = command.tag
             }
             
-            let timeoutNanoseconds = UInt64(configuration.commandTimeout * 1_000_000_000)
+            let timeoutNanoseconds = ConnectionActor.nanoseconds(fromSeconds: configuration.commandTimeout)
             let timeoutTask = Task { [commandTag = command.tag] in
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 await self.handleTimeout(for: commandTag)
@@ -356,7 +403,7 @@ actor ConnectionActor {
             )
             pendingCommands[command.tag] = pending
 
-            logger.log(level: .debug, "Sending command \(command.tag): \(command.command)")
+            logger.log(level: .debug, "Sending command \(command.tag): \(command.command.label)")
 
             do {
                 try await channel.writeAndFlush(encoded.initialData)
@@ -386,15 +433,37 @@ actor ConnectionActor {
         case .failure(let error):
             for (_, pending) in pendingCommands {
                 pending.timeoutTask.cancel()
-                pending.continuation.resume(throwing: error)
+                if let bye = pendingBye {
+                    // The connection dropped after the server sent a `* BYE`
+                    let response = IMAPServerResponse(
+                        status: .bye,
+                        code: bye.code,
+                        text: bye.text,
+                        commandName: pending.command.command.label
+                    )
+                    pending.continuation.resume(throwing: IMAPError.connectionClosed(response))
+                } else {
+                    pending.continuation.resume(throwing: error)
+                }
             }
             pendingCommands.removeAll()
             pendingContinuationTag = nil
+            pendingBye = nil
+
+            // If the channel is actually gone (abrupt drop / errorCaught-then-close,
+            // as opposed to a parse error on a live connection), reset the actor
+            // state so a later connect() can re-establish. Without this the state
+            // stays .authenticated/.selected and connect() throws invalidState,
+            // making reconnect-after-drop impossible.
+            if channel?.isActive != true {
+                connectionState = .disconnected
+                await cleanup()
+            }
         }
     }
-    
+
     private func handleResponse(_ response: IMAPResponse) async {
-        logger.log(level: .trace, "Handling response: \(response)")
+        logger.log(level: .trace, "Handling response: \(response.loggingDescription)")
         
         switch response {
         case .tagged(let tag, let status):
@@ -411,12 +480,18 @@ actor ConnectionActor {
                     // Return all collected responses plus the tagged response
                     pending.responses.append(response)
                     pending.continuation.resume(returning: pending.responses)
-                case .no(_, let message), .bad(_, let message):
-                    let error = IMAPError.commandFailed(
-                        command: String(describing: pending.command.command),
-                        response: message ?? "Unknown error"
+                case .no(let code, let text), .bad(let code, let text):
+                    let serverStatus: IMAPServerResponse.Status = {
+                        if case .bad = status { return .bad }
+                        return .no
+                    }()
+                    let response = IMAPServerResponse(
+                        status: serverStatus,
+                        code: code,
+                        text: text,
+                        commandName: pending.command.command.label
                     )
-                    pending.continuation.resume(throwing: error)
+                    pending.continuation.resume(throwing: IMAPError.commandFailed(response))
                 default:
                     pending.responses.append(response)
                     pending.continuation.resume(returning: pending.responses)
@@ -426,9 +501,12 @@ actor ConnectionActor {
         case .untagged(let untagged):
             switch untagged {
             case .capability(let caps):
-                serverCapabilities = Set(caps)
+                serverCapabilities = ConnectionActor.normalised(caps)
             case .status(let status):
                 updateCapabilitiesIfPresent(status)
+                if case .bye(let code, let text) = status {
+                    pendingBye = (code: code, text: text)
+                }
             default:
                 break
             }
@@ -451,50 +529,48 @@ actor ConnectionActor {
     
     private func waitForGreeting() async throws -> IMAPResponse {
         return try await withCheckedThrowingContinuation { continuation in
+            // `resumedState` guarantees the continuation is resumed exactly once
+            // across the racing timeout task and the greeting handler.
             let resumedState = MutableState(value: false)
-            let greetingState = MutableState(value: false)
-            
+
+            let greetingTimeout = ConnectionActor.nanoseconds(fromSeconds: configuration.connectionTimeout)
             let timeoutTask = Task {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try await Task.sleep(nanoseconds: greetingTimeout)
                 if resumedState.compareAndExchange(expected: false, new: true) {
-                    continuation.resume(throwing: IMAPError.timeout)
+                    continuation.resume(throwing: IMAPError.timeout(command: "CONNECT"))
                 }
             }
             
-            channelHandler?.setResponseHandler { [weak self] result in
-                guard !resumedState.value else { return }
-                
+            // One-shot: the handler is delivered the first response batch (the greeting) and then cleared, 
+            // so any response arriving before the persistent handler is installed in connect() is buffered, not dropped.
+            channelHandler?.setResponseHandler({ [weak self] result in
                 switch result {
                 case .success(let responses):
-                    // Only handle the first set of responses as greeting
-                    if greetingState.compareAndExchange(expected: false, new: true) {
-                        if resumedState.compareAndExchange(expected: false, new: true) {
-                            timeoutTask.cancel()
-                            
-                            if let greeting = responses.first {
-                                // Process any CAPABILITY responses that came with the greeting
-                                Task { [weak self] in
-                                    for response in responses {
-                                        if case .untagged(.capability(let caps)) = response {
-                                            await self?.updateCapabilities(Set(caps))
-                                        } else if case .untagged(.status(let status)) = response {
-                                            await self?.updateCapabilitiesIfPresent(status)
-                                        }
-                                    }
+                    // CAS, not a bare read: the timeout task may have already won.
+                    guard resumedState.compareAndExchange(expected: false, new: true) else { return }
+                    timeoutTask.cancel()
+
+                    if let greeting = responses.first {
+                        // Process any CAPABILITY responses that came with the greeting
+                        Task { [weak self] in
+                            for response in responses {
+                                if case .untagged(.capability(let caps)) = response {
+                                    await self?.updateCapabilities(Set(caps))
+                                } else if case .untagged(.status(let status)) = response {
+                                    await self?.updateCapabilitiesIfPresent(status)
                                 }
-                                continuation.resume(returning: greeting)
-                            } else {
-                                continuation.resume(throwing: IMAPError.protocolError("No greeting received"))
                             }
                         }
+                        continuation.resume(returning: greeting)
+                    } else {
+                        continuation.resume(throwing: IMAPError.protocolError("No greeting received"))
                     }
                 case .failure(let error):
-                    if resumedState.compareAndExchange(expected: false, new: true) {
-                        timeoutTask.cancel()
-                        continuation.resume(throwing: error)
-                    }
+                    guard resumedState.compareAndExchange(expected: false, new: true) else { return }
+                    timeoutTask.cancel()
+                    continuation.resume(throwing: error)
                 }
-            }
+            }, oneShot: true)
         }
     }
     
@@ -509,10 +585,23 @@ actor ConnectionActor {
         
         for (_, pending) in pendingCommands {
             pending.timeoutTask.cancel()
-            pending.continuation.resume(throwing: IMAPError.disconnected)
+            if let bye = pendingBye {
+                // Teardown after a `* BYE` was seen (e.g. an explicit disconnect that races the channel going inactive): 
+                // Surface the BYE reason rather than a bare transport error, matching the handleResponses path.
+                let response = IMAPServerResponse(
+                    status: .bye,
+                    code: bye.code,
+                    text: bye.text,
+                    commandName: pending.command.command.label
+                )
+                pending.continuation.resume(throwing: IMAPError.connectionClosed(response))
+            } else {
+                pending.continuation.resume(throwing: IMAPError.connectionClosed(nil))
+            }
         }
         pendingCommands.removeAll()
         pendingContinuationTag = nil
+        pendingBye = nil
     }
 }
 
@@ -571,7 +660,7 @@ private extension ConnectionActor {
                     await cancelContinuation(
                         tag: tag,
                         pending: pending,
-                        error: IMAPError.authenticationFailed("SASL response handler returned nil")
+                        error: IMAPError.authenticationFailed("SASL response handler returned nil", response: nil)
                     )
                     return
                 }
@@ -613,7 +702,7 @@ private extension ConnectionActor {
             if pendingContinuationTag == tag {
                 pendingContinuationTag = nil
             }
-            pending.continuation.resume(throwing: IMAPError.timeout)
+            pending.continuation.resume(throwing: IMAPError.timeout(command: pending.command.command.label))
         }
     }
 
@@ -629,7 +718,7 @@ private extension ConnectionActor {
         }
         
         if case .capability(let caps) = code {
-            serverCapabilities = Set(caps)
+            serverCapabilities = ConnectionActor.normalised(caps)
         }
     }
 }

@@ -1,6 +1,37 @@
 import Foundation
 
 extension IMAPClient {
+    /// Ensure the fetch items include the attributes a `MessageSummary` requires
+    /// — UID, internal date, and size — adding any that are absent.
+    ///
+    /// `MessageSummary` always carries this core metadata, so a caller passing a
+    /// reduced item set still gets a complete summary rather than a parse failure.
+    /// UID is also needed to map each response back to its request when fetches
+    /// are pipelined. The missing attributes are prepended (`UID`, `INTERNALDATE`,
+    /// `RFC822.SIZE`) so the caller's order is otherwise kept.
+    ///
+    /// The `ALL`/`FAST`/`FULL` macros already expand to `FLAGS INTERNALDATE
+    /// RFC822.SIZE` (RFC 3501 §6.4.5), so they satisfy the date/size requirement
+    /// and only `UID` (absent from every macro) is added alongside them.
+    static func summaryFetchItems(_ items: [IMAPCommand.FetchItem]) -> [IMAPCommand.FetchItem] {
+        func contains(_ test: (IMAPCommand.FetchItem) -> Bool) -> Bool {
+            items.contains(where: test)
+        }
+        let hasMacro = contains { switch $0 { case .all, .fast, .full: return true; default: return false } }
+
+        var prefix: [IMAPCommand.FetchItem] = []
+        if !contains({ if case .uid = $0 { return true }; return false }) {
+            prefix.append(.uid)
+        }
+        if !hasMacro, !contains({ if case .internalDate = $0 { return true }; return false }) {
+            prefix.append(.internalDate)
+        }
+        if !hasMacro, !contains({ if case .rfc822Size = $0 { return true }; return false }) {
+            prefix.append(.rfc822Size)
+        }
+        return prefix + items
+    }
+
     /// Returns message UIDs matching the search criteria.
     ///
     /// This method uses `UID SEARCH` which returns stable UIDs that persist even when
@@ -46,45 +77,12 @@ extension IMAPClient {
         )
     }
 
-    /// Returns message sequence numbers matching the search criteria.
-    ///
-    /// - Warning: Sequence numbers are position-dependent and can change when messages
-    ///   are deleted or moved. For multi-step operations, use ``listMessageUIDs(in:searchCriteria:charset:)``
-    ///   instead to avoid race conditions.
-    @available(*, deprecated, message: "Use listMessageUIDs() instead - sequence numbers are unstable when mailbox changes")
-    public func listMessages(
-        in mailbox: String,
-        searchCriteria: IMAPCommand.SearchCriteria = .all,
-        charset: String? = nil
-    ) async throws -> [MessageSequenceNumber] {
-        try await retryHandler.executeWithReconnect(
-            operation: "listMessages",
-            needsReconnect: { error in
-                (error as? IMAPError)?.requiresReconnection ?? false
-            },
-            reconnect: {
-                try await self.connect()
-            },
-            work: {
-                _ = try await self.selectMailbox(mailbox)
-
-                let responses = try await self.connection.sendCommand(.search(charset: charset, criteria: searchCriteria))
-
-                for response in responses {
-                    if case .untagged(.search(let numbers)) = response {
-                        return numbers
-                    }
-                }
-
-                return []
-            }
-        )
-    }
-
     /// Fetches a message by its UID.
     ///
-    /// - Note: UID is automatically included in fetch items if not present, to verify
-    ///   the response matches the requested message.
+    /// - Note: the attributes a `MessageSummary` needs — UID, internal date, and
+    ///   size — are added to the fetch when absent, so a reduced `items` set still
+    ///   yields a complete summary. UID also lets the response be matched to the
+    ///   requested message.
     ///
     /// - Parameters:
     ///   - uid: The UID of the message to fetch
@@ -110,17 +108,10 @@ extension IMAPClient {
             work: {
                 _ = try await self.selectMailbox(mailbox)
 
-                // Ensure UID is included in fetch items so we can verify the response.
-                // Without the UID in the response, we cannot confirm we received the
-                // correct message when concurrent fetches are in flight.
-                let hasUID = items.contains { item in
-                    if case .uid = item { return true }
-                    return false
-                }
-                var fetchItems = items
-                if !hasUID {
-                    fetchItems.insert(.uid, at: 0)
-                }
+                // Ensure the summary's required attributes (UID, internal date,
+                // size) are fetched even from a reduced item set; UID also maps
+                // each response back to its request when fetches are pipelined.
+                let fetchItems = IMAPClient.summaryFetchItems(items)
 
                 let responses = try await self.connection.sendCommand(
                     .uid(.fetch(sequence: .single(uid), items: fetchItems))
@@ -168,68 +159,62 @@ extension IMAPClient {
         in mailbox: String,
         peek: Bool = true
     ) async throws -> Data? {
-        _ = try await selectMailbox(mailbox)
+        // A body fetch is an idempotent read, so reconnect-and-retry on a lost
+        // connection is safe — matching fetchMessage. (Even with peek: false a
+        // retried BODY[] only re-sets \Seen, which is idempotent; with the peek
+        // default it does not touch \Seen at all.)
+        try await retryHandler.executeWithReconnect(
+            operation: "fetchMessageBody",
+            needsReconnect: { error in
+                (error as? IMAPError)?.requiresReconnection ?? false
+            },
+            reconnect: {
+                try await self.connect()
+            },
+            work: {
+                _ = try await self.selectMailbox(mailbox)
 
-        // Request UID along with body for verification
-        let responses = try await connection.sendCommand(
-            .uid(.fetch(
-                sequence: .single(uid),
-                items: [.uid, .bodySection(section: nil, peek: peek)]
-            ))
-        )
+                // Request UID along with body for verification
+                let responses = try await self.connection.sendCommand(
+                    .uid(.fetch(
+                        sequence: .single(uid),
+                        items: [.uid, .bodySection(section: nil, peek: peek)]
+                    ))
+                )
 
-        for response in responses {
-            if case .untagged(.fetch(_, let attributes)) = response {
-                // Extract UID from response for verification
-                var responseUID: UID?
-                var bodyData: Data?
+                for response in responses {
+                    if case .untagged(.fetch(_, let attributes)) = response {
+                        // Extract UID from response for verification
+                        var responseUID: UID?
+                        var bodyData: Data?
 
-                for attribute in attributes {
-                    switch attribute {
-                    case .uid(let fetchedUID):
-                        responseUID = fetchedUID
-                    case .body(_, _, let data), .bodyPeek(_, _, let data):
-                        bodyData = data
-                    default:
-                        continue
+                        for attribute in attributes {
+                            switch attribute {
+                            case .uid(let fetchedUID):
+                                responseUID = fetchedUID
+                            case .body(_, _, let data), .bodyPeek(_, _, let data):
+                                bodyData = data
+                            default:
+                                continue
+                            }
+                        }
+
+                        // Only return body if UID matches the requested UID
+                        // This prevents returning wrong data when multiple fetches are pending
+                        if let responseUID = responseUID {
+                            if responseUID == uid, let data = bodyData {
+                                return data
+                            } else if responseUID != uid {
+                                self.logger.debug("UID mismatch in fetchMessageBody: requested \(uid), received \(responseUID) - skipping response")
+                            }
+                        } else {
+                            self.logger.warning("FETCH response missing UID attribute for request UID \(uid)")
+                        }
                     }
                 }
 
-                // Only return body if UID matches the requested UID
-                // This prevents returning wrong data when multiple fetches are pending
-                if let responseUID = responseUID {
-                    if responseUID == uid, let data = bodyData {
-                        return data
-                    } else if responseUID != uid {
-                        self.logger.debug("UID mismatch in fetchMessageBody: requested \(uid), received \(responseUID) - skipping response")
-                    }
-                } else {
-                    self.logger.warning("FETCH response missing UID attribute for request UID \(uid)")
-                }
+                return nil
             }
-        }
-
-        return nil
-    }
-
-    // Fetch message by sequence number (not UID)
-    public func fetchMessageBySequence(
-        sequenceNumber: MessageSequenceNumber,
-        in mailbox: String,
-        items: [IMAPCommand.FetchItem] = [.uid, .flags, .internalDate, .rfc822Size, .envelope]
-    ) async throws -> MessageSummary? {
-        _ = try await selectMailbox(mailbox)
-
-        let responses = try await connection.sendCommand(
-            .fetch(sequence: .single(sequenceNumber), items: items)
         )
-
-        for response in responses {
-            if case .untagged(.fetch(let seqNum, let attributes)) = response {
-                return try parseMessageSummary(sequenceNumber: seqNum, attributes: attributes)
-            }
-        }
-
-        return nil
     }
 }

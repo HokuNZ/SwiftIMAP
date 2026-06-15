@@ -2,6 +2,9 @@ import XCTest
 @testable import SwiftIMAP
 
 final class ModelTests: XCTestCase {
+
+    /// Build a MessageId from a known-good bare value (test convenience).
+    private func mid(_ value: String) -> MessageId { MessageId(parsing: value)! }
     
     func testMailboxCreation() {
         let mailbox = Mailbox(
@@ -91,7 +94,7 @@ final class ModelTests: XCTestCase {
             cc: [],
             bcc: [],
             inReplyTo: nil,
-            messageID: "<12345@example.com>"
+            messageId: mid("12345@example.com")
         )
         
         let summary = MessageSummary(
@@ -112,7 +115,89 @@ final class ModelTests: XCTestCase {
         XCTAssertNotNil(summary.envelope)
         XCTAssertEqual(summary.envelope?.subject, "Test Subject")
     }
-    
+
+    /// The model snapshots are Equatable so consumers can diff and assert
+    /// against whole values: MessageSummary, Envelope, BodyStructure.
+    func testModelEquatableConformance() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        func makeSummary(subject: String) -> MessageSummary {
+            MessageSummary(
+                uid: 1,
+                sequenceNumber: 1,
+                flags: [.seen],
+                keywords: ["@Triaged"],
+                internalDate: date,
+                size: 100,
+                envelope: Envelope(date: date, subject: subject,
+                                   from: [Address(name: "A", mailbox: "a", host: "x.com")]),
+                references: [mid("r1@x.com")]
+            )
+        }
+
+        XCTAssertEqual(makeSummary(subject: "Same"), makeSummary(subject: "Same"))
+        XCTAssertNotEqual(makeSummary(subject: "One"), makeSummary(subject: "Two"))
+
+        // Envelope: two independently-built instances with equal inputs compare
+        // equal (incl. the derived *Entries), and differ when a field differs.
+        func makeEnvelope(subject: String) -> Envelope {
+            Envelope(date: date, subject: subject,
+                     from: [Address(name: "A", mailbox: "a", host: "x.com")],
+                     to: [Address(name: nil, mailbox: "t", host: "x.com")])
+        }
+        XCTAssertEqual(makeEnvelope(subject: "S"), makeEnvelope(subject: "S"))
+        XCTAssertNotEqual(makeEnvelope(subject: "S"), makeEnvelope(subject: "T"))
+
+        let structure = BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10)
+        XCTAssertEqual(structure, BodyStructure(type: "text", subtype: "plain", encoding: "7bit", size: 10))
+        XCTAssertNotEqual(structure, BodyStructure(type: "text", subtype: "html", encoding: "7bit", size: 10))
+    }
+
+    /// MessageId canonicalises to the bare form, so bracketed and bare framings
+    /// of the same identifier compare equal — the property that makes threading
+    /// comparisons bracket-safe.
+    func testMessageIdNormalisationAndEquality() {
+        XCTAssertEqual(MessageId(parsing: "<a@x.com>"), mid("a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "  <a@x.com> "), MessageId(parsing: "a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "<a@x.com>")?.value, "a@x.com")
+        XCTAssertEqual(mid("a@x.com").bracketed, "<a@x.com>")
+        XCTAssertNil(MessageId(parsing: "   "))
+        XCTAssertNil(MessageId(parsing: "<>"))
+
+        // Malformed half-bracketed tokens still canonicalise to the bare id
+        // (brackets stripped independently), so threading still matches.
+        XCTAssertEqual(MessageId(parsing: "<a@x.com"), mid("a@x.com"))
+        XCTAssertEqual(MessageId(parsing: "a@x.com>"), mid("a@x.com"))
+        // A lone bracket has no identity and is dropped.
+        XCTAssertNil(MessageId(parsing: "<"))
+        XCTAssertNil(MessageId(parsing: ">"))
+    }
+
+    /// MessageId.parseList tokenises a raw References header into ordered,
+    /// normalised identifiers, accepting space or comma separators and dropping
+    /// empty tokens.
+    func testMessageIdParseList() {
+        XCTAssertEqual(MessageId.parseList("<a@x.com> <b@y.com>"),
+                       [mid("a@x.com"), mid("b@y.com")])
+        XCTAssertEqual(MessageId.parseList("<a@x.com>,<b@y.com>"),
+                       [mid("a@x.com"), mid("b@y.com")])
+        XCTAssertEqual(MessageId.parseList("  <only@x.com>  "), [mid("only@x.com")])
+        XCTAssertEqual(MessageId.parseList("bare@x.com"), [mid("bare@x.com")])
+        XCTAssertEqual(MessageId.parseList("   "), [])
+        // Empty/garbage tokens between valid ones are dropped; order is preserved.
+        XCTAssertEqual(MessageId.parseList("<a@x.com> <> <b@x.com>"),
+                       [mid("a@x.com"), mid("b@x.com")])
+    }
+
+    /// Threading is bracket-safe by construction: a reply's inReplyTo and the
+    /// parent's messageId compare equal regardless of how each was framed.
+    func testThreadingComparisonIsBracketSafe() {
+        let parentID = MessageId(parsing: "<parent@x.com>")!          // from ENVELOPE (bracketed)
+        let reply = Envelope(inReplyTo: MessageId(parsing: "parent@x.com"),  // however framed
+                             messageId: mid("child@x.com"))
+        XCTAssertEqual(reply.inReplyTo, parentID)
+        XCTAssertTrue([parentID].contains(reply.inReplyTo!))
+    }
+
     func testSequenceSetStringValue() {
         let single = IMAPCommand.SequenceSet.single(42)
         XCTAssertEqual(single.stringValue, "42")
