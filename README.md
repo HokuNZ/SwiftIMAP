@@ -439,4 +439,4 @@ This repository is LLM-generated code, and we have done our best to be accurate,
 ## License
 
 SwiftIMAP is released under the MIT license. See [`LICENSE`](LICENSE) for details,
-and [`LICENSES.md`](LICENSES.md) for third-party dependency acknowledgements.
+and [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) for third-party dependency acknowledgements.
