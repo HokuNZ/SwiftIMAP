@@ -166,9 +166,3 @@ Reference:
 - [x] MOVE (RFC 6851) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] UID EXPUNGE (RFC 4315) command encoded (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] LITERAL+ (RFC 7888) non-synchronizing literals when capability advertised.
-
----
-
-Further coverage work — broader integration parity, property-style parser tests,
-and multi-server quirks (Gmail/Dovecot/Cyrus) — is tracked in #77. The LITERAL+
-(RFC 7888) review is complete (see §10).
