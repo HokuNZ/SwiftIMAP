@@ -81,7 +81,8 @@ A complete runnable version of this flow is in
 
 ## Command-Line Tool
 
-SwiftIMAP includes a command-line tool for testing IMAP connections.
+SwiftIMAP includes `swift-imap-tester` for exercising connections against a real
+server. It has two subcommands, `connect` (one-shot) and `interactive`.
 
 ### Building the CLI
 
@@ -89,44 +90,41 @@ SwiftIMAP includes a command-line tool for testing IMAP connections.
 swift build --product swift-imap-tester
 ```
 
-### Basic Usage
+### One-shot commands
+
+`connect` runs a single command and exits. `--command` accepts `list` (default),
+`select`, `search`, or `fetch`:
 
 ```bash
-# Connect and list mailboxes
+# List mailboxes
 .build/debug/swift-imap-tester connect \
-  --host imap.gmail.com \
-  --username your@email.com \
-  --password yourpassword \
+  --host imap.gmail.com --username your@email.com --password yourpassword \
   --command list
 
 # Fetch a specific message
 .build/debug/swift-imap-tester connect \
-  --host imap.gmail.com \
-  --username your@email.com \
-  --password yourpassword \
-  --command fetch \
-  --mailbox INBOX \
-  --uid 12345
+  --host imap.gmail.com --username your@email.com --password yourpassword \
+  --command fetch --mailbox INBOX --uid 12345
 ```
 
-### Interactive Mode
+Connection flags (both subcommands): `--host`, `--username`, `--password`,
+`--port` (default 993), `--starttls`, `--no-tls`, `--verbose`.
+
+### Interactive mode
 
 ```bash
 .build/debug/swift-imap-tester interactive \
-  --host imap.gmail.com \
-  --username your@email.com \
-  --password yourpassword
+  --host imap.gmail.com --username your@email.com --password yourpassword
 ```
 
-Interactive commands:
-- `list [pattern]` - List mailboxes
-- `select <mailbox>` - Select a mailbox
-- `status [mailbox]` - Show mailbox status
-- `search` - Search messages in selected mailbox
-- `fetch <uid>` - Fetch a message by UID
-- `capability` - Show server capabilities
-- `help` - Show available commands
-- `quit` - Disconnect and exit
+Interactive commands (type `help` for the full list):
+
+- `list [pattern]`, `select <mailbox>`, `status [mailbox]`, `close`
+- `messages`, `fetch <uid>`, `capability`
+- `search [from <email> | subject <text> | text <text> | unread | flagged | since <date>]`
+- `read <uid>`, `unread <uid>`, `flag <uid>`, `unflag <uid>`
+- `copy <uid> <mailbox>`, `move <uid> <mailbox>`, `delete <uid>`, `expunge`
+- `help`, `quit`
 
 ## API Documentation
 

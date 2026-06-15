@@ -62,7 +62,7 @@ Reference:
 - [x] CHECK (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] CLOSE (`Sources/SwiftIMAP/Protocol/IMAPCommand.swift`).
 - [x] EXPUNGE (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
-- [x] SEARCH (full criteria list encoded) (`Sources/SwiftIMAP/Protocol/IMAPEncoder+Search.swift`).
+- [x] SEARCH (full criteria list encoded) (`Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`).
 - [x] FETCH (RFC822.* and header/text variants mapped) (`Sources/SwiftIMAP/Protocol/IMAPParser+Fetch.swift`).
 - [x] STORE (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
 - [x] COPY (`Sources/SwiftIMAP/IMAPClient+MessageOps.swift`).
@@ -150,7 +150,7 @@ Reference:
 - [x] UNFLAGGED
 - [x] UNKEYWORD
 - [x] UNSEEN
-  - Implementation: `Sources/SwiftIMAP/Protocol/IMAPEncoder+Search.swift`
+  - Implementation: `Sources/SwiftIMAP/Protocol/IMAPEncoder.swift`
 
 ## 8. Sequence Sets (RFC 2.3.1.2)
 - [x] `*` (last message) is supported via `.last` and `*:n` via `.rangeFromLast(to:)`.
@@ -169,6 +169,6 @@ Reference:
 
 ---
 
-Planned next passes (suggested order):
-1) Expand integration coverage (GreenMail + mock server parity).
-2) Review optional extensions (e.g., LITERAL+ / RFC 7888).
+Further coverage work — broader integration parity, property-style parser tests,
+and multi-server quirks (Gmail/Dovecot/Cyrus) — is tracked in #77. The LITERAL+
+(RFC 7888) review is complete (see §10).
