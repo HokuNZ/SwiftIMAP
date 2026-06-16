@@ -1,9 +1,10 @@
-# Third-party licenses
+# Acknowledgements
 
 SwiftIMAP is released under the MIT License (see [`LICENSE`](LICENSE) — © 2024
 Electric Fence Ltd).
 
-It builds on the open-source packages below. SwiftIMAP is distributed as source
+With thanks to the open-source packages it builds on, listed below with their
+licences. SwiftIMAP is distributed as source
 via Swift Package Manager, so each dependency is fetched with its own full
 licence (and `NOTICE`, where applicable) — this file is a courtesy
 acknowledgement, not a replacement for those. Follow the links for the complete
