@@ -455,4 +455,57 @@ final class IMAPExpungeSafetyTests: XCTestCase {
                        "The deletion STORE must not run once validity changed")
         await client.disconnect()
     }
+
+    // MARK: - MOVE emulation
+
+    /// iCloud's shape: UIDPLUS but no MOVE. A move is COPY, STORE \Deleted, then UID EXPUNGE of
+    /// just those messages, in that order. Stopping after the flag left the original in the
+    /// source mailbox for every other client to see.
+    func testMoveWithoutMOVEButWithUIDPLUSExpungesTheCopiedMessages() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN UIDPLUS")
+        mockServer.setResponse(for: "UID COPY", response: "OK [COPYUID 1 3,5 10,11] Copy completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+        mockServer.setResponse(for: "UID EXPUNGE", response: "OK Expunge completed")
+
+        try await client.moveMessages(uids: [3, 5], from: "INBOX", to: "Archive")
+
+        let uidCommands = mockServer.receivedCommands.map { $0.uppercased() }.filter { $0.contains("UID ") }
+        XCTAssertEqual(uidCommands.count, 3, "COPY, STORE, EXPUNGE: \(uidCommands)")
+        XCTAssertTrue(uidCommands[0].contains("UID COPY 3,5"), uidCommands[0])
+        XCTAssertTrue(uidCommands[1].contains("UID STORE 3,5") && uidCommands[1].contains("\\DELETED"), uidCommands[1])
+        XCTAssertTrue(uidCommands[2].contains("UID EXPUNGE 3,5"), uidCommands[2])
+        XCTAssertFalse(mockServer.receivedCommands.contains { $0.uppercased().contains("MOVE") })
+
+        await client.disconnect()
+    }
+
+    /// Without UIDPLUS the only expunge left is whole-mailbox, which would take other clients'
+    /// pending deletions with it, so the emulation still stops at the flag.
+    func testMoveWithoutMOVEOrUIDPLUSLeavesTheFlaggedOriginal() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "UID COPY", response: "OK Copy completed")
+        mockServer.setResponse(for: "UID STORE", response: "OK Store completed")
+
+        try await client.moveMessages(uids: [3], from: "INBOX", to: "Archive")
+
+        let expunges = mockServer.receivedCommands.filter { $0.uppercased().contains("EXPUNGE") }
+        XCTAssertTrue(expunges.isEmpty, "no whole-mailbox EXPUNGE may reach the server: \(expunges)")
+        XCTAssertTrue(mockServer.receivedCommands.contains { $0.uppercased().contains("UID STORE 3") })
+
+        await client.disconnect()
+    }
+
+    /// With MOVE the server does the work in one command; nothing else is sent.
+    func testMoveWithMOVESendsOnlyUIDMove() async throws {
+        let client = try await makeClient(capabilities: "IMAP4rev1 LOGIN MOVE UIDPLUS")
+        mockServer.setResponse(for: "UID MOVE", response: "OK Move completed")
+
+        try await client.moveMessages(uids: [3, 5], from: "INBOX", to: "Archive")
+
+        let uidCommands = mockServer.receivedCommands.map { $0.uppercased() }.filter { $0.contains("UID ") }
+        XCTAssertEqual(uidCommands.count, 1, uidCommands.joined(separator: " | "))
+        XCTAssertTrue(uidCommands[0].contains("UID MOVE 3,5"), uidCommands[0])
+
+        await client.disconnect()
+    }
 }
