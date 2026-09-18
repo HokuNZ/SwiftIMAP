@@ -204,14 +204,20 @@ extension IMAPClient {
             // stale UIDs if UIDVALIDITY changed between the two SELECTs.
             try await copyMessage(uid: uid, from: sourceMailbox, to: destinationMailbox, expectedUIDValidity: expectedUIDValidity)
             try await storeFlags(uid: uid, in: sourceMailbox, flags: [.deleted], action: .add, expectedUIDValidity: expectedUIDValidity)
+            if capabilities.contains("UIDPLUS") {
+                try await expunge(uids: [uid], in: sourceMailbox, expectedUIDValidity: expectedUIDValidity)
+            }
         }
     }
 
     /// Move multiple messages to another mailbox.
     ///
-    /// As with `moveMessage`, servers without the MOVE extension get the
-    /// COPY-then-mark-`\Deleted` fallback, which leaves the source messages in
-    /// place (flagged `\Deleted`) until an expunge runs.
+    /// As with `moveMessage`, servers without the MOVE extension get the RFC 6851 §3.3
+    /// emulation: COPY, STORE `\Deleted`, then `UID EXPUNGE` of just those messages when
+    /// the server has UIDPLUS. Without UIDPLUS the originals stay flagged `\Deleted` in the
+    /// source mailbox, because the only remaining expunge is whole-mailbox and would take
+    /// every other client's pending deletions with it. iCloud advertises UIDPLUS but not MOVE,
+    /// so it takes this path on every move.
     public func moveMessages(uids: [UID], from sourceMailbox: String, to destinationMailbox: String, expectedUIDValidity: UInt32? = nil) async throws {
         guard !uids.isEmpty else { return }
 
@@ -230,6 +236,9 @@ extension IMAPClient {
             // two SELECTs.
             try await copyMessages(uids: uids, from: sourceMailbox, to: destinationMailbox, expectedUIDValidity: expectedUIDValidity)
             try await storeFlags(uids: uids, in: sourceMailbox, flags: [.deleted], action: .add, expectedUIDValidity: expectedUIDValidity)
+            if capabilities.contains("UIDPLUS") {
+                try await expunge(uids: uids, in: sourceMailbox, expectedUIDValidity: expectedUIDValidity)
+            }
         }
     }
 
