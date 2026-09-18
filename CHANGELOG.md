@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-18
+
+### Fixed
+- `MIMEPart.decodedText` maps the part's charset through CoreFoundation's IANA table on Darwin (#80). The previous five-entry table sent every other charset (GB2312, Shift_JIS, KOI8-R, Windows-1251, Big5) down the UTF-8 path, where the decode failed and the body came back `nil`. Unknown names still fall back to UTF-8. The non-Darwin table now covers every encoding swift-corelibs-foundation can decode.
+- MimeParser dependency resolved at 0.2.7 (HokuNZ/MimeParser#1): an unquoted `Content-Type` parameter value containing spaces, as Apple Mail before 2008 wrote for attachment names, no longer fails the whole message.
+
 ## [2.0.0] - 2026-06-15
 
 ### Security
