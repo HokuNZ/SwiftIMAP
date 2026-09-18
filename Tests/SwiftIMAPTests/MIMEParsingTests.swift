@@ -275,6 +275,19 @@ final class MIMEParsingTests: XCTestCase {
         #endif
     }
 
+    /// Mail labelled `gb2312` is very often GBK, as browsers assume: 镕 is GBK-only, so the
+    /// strict GB 2312 converter returned nil for the whole body. The GB family decodes through
+    /// GB 18030, a superset of both.
+    func testAGBKBodyLabelledGB2312Decodes() throws {
+        #if canImport(Darwin)
+        let raw = "Content-Type: text/plain; charset=gb2312\r\nContent-Transfer-Encoding: base64\r\n\r\nMS4gxOO6w6Os6Ua7+Q0K\r\n"
+        let parsed = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(raw.utf8)))
+        XCTAssertEqual(parsed.plainTextContent, "1. 你好，镕基\r\n")
+        #else
+        throw XCTSkip("GB decoding needs CoreFoundation")
+        #endif
+    }
+
     func testCharsetNamesMapThroughTheIANATable() {
         XCTAssertEqual(MIMEPart.stringEncoding(forIANACharset: "UTF-8"), .utf8)
         XCTAssertEqual(MIMEPart.stringEncoding(forIANACharset: "iso-8859-1"), .isoLatin1)

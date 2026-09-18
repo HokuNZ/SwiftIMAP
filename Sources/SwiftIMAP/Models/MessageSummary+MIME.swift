@@ -394,8 +394,17 @@ public struct MIMEPart: Sendable, Equatable {
         return Self.stringEncoding(forIANACharset: charset) ?? .utf8
     }
 
+    /// Mail labelled `gb2312` is very often GBK or GB 18030 in practice, and the strict
+    /// GB 2312 converter rejects the first byte pair outside its range, so the whole body
+    /// comes back nil. GB 18030 is a superset of both and decodes all three.
+    private static let gbFamily: Set<String> = ["gb2312", "gb_2312-80", "csgb2312", "chinese", "euc-cn", "gbk", "x-gbk", "cp936", "ms936", "windows-936"]
+
     static func stringEncoding(forIANACharset charset: String) -> String.Encoding? {
         #if canImport(Darwin)
+        if gbFamily.contains(charset.lowercased()) {
+            let gb18030 = CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+            return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(gb18030))
+        }
         let cfEncoding = CFStringConvertIANACharSetNameToEncoding(charset as CFString)
         guard cfEncoding != kCFStringEncodingInvalidId else { return nil }
         return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
