@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-09-18
+
 ### Fixed
 - Without the MOVE capability, `moveMessage(s)` now finishes the RFC 6851 §3.3 emulation with a `UID EXPUNGE` of the copied messages when the server has UIDPLUS. The fallback used to stop at the `\Deleted` flag, so on iCloud (UIDPLUS, no MOVE) every moved message stayed in the source mailbox flagged for deletion, visible to every other client. Without UIDPLUS the behaviour is unchanged.
 - The GB family of charsets (`gb2312`, `gbk`, …) decodes through GB 18030 (#82).
