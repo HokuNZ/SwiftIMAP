@@ -383,25 +383,32 @@ public struct MIMEPart: Sendable, Equatable {
         return nil
     }
     
+    /// The part's declared charset as a `String.Encoding`, through CoreFoundation's IANA table
+    /// where it exists. A five-entry table here sent every other charset (GB2312, Shift_JIS,
+    /// KOI8-R, Windows-1251, Big5) down the UTF-8 path, where the decode failed and the body
+    /// rendered blank. Unknown or missing names still fall back to UTF-8.
     private var encoding: String.Encoding {
-        guard let charset = charset?.lowercased() else {
+        guard let charset = charset?.trimmingCharacters(in: .whitespaces), !charset.isEmpty else {
             return .utf8
         }
-        
-        switch charset {
-        case "utf-8", "utf8":
-            return .utf8
-        case "iso-8859-1", "latin1":
-            return .isoLatin1
-        case "us-ascii", "ascii":
-            return .ascii
-        case "utf-16":
-            return .utf16
-        case "windows-1252", "cp1252":
-            return .windowsCP1252
-        default:
-            return .utf8
+        return Self.stringEncoding(forIANACharset: charset) ?? .utf8
+    }
+
+    static func stringEncoding(forIANACharset charset: String) -> String.Encoding? {
+        #if canImport(Darwin)
+        let cfEncoding = CFStringConvertIANACharSetNameToEncoding(charset as CFString)
+        guard cfEncoding != kCFStringEncodingInvalidId else { return nil }
+        return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
+        #else
+        switch charset.lowercased() {
+        case "utf-8", "utf8": return .utf8
+        case "iso-8859-1", "latin1": return .isoLatin1
+        case "us-ascii", "ascii": return .ascii
+        case "utf-16": return .utf16
+        case "windows-1252", "cp1252": return .windowsCP1252
+        default: return nil
         }
+        #endif
     }
 
     private static func transferEncodingString(from encoding: ContentTransferEncoding?) -> String? {
