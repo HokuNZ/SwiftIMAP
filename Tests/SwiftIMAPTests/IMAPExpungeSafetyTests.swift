@@ -470,7 +470,9 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         try await client.moveMessages(uids: [3, 5], from: "INBOX", to: "Archive")
 
         let uidCommands = mockServer.receivedCommands.map { $0.uppercased() }.filter { $0.contains("UID ") }
-        XCTAssertEqual(uidCommands.count, 3, "COPY, STORE, EXPUNGE: \(uidCommands)")
+        guard uidCommands.count == 3 else {
+            return XCTFail("expected COPY, STORE, EXPUNGE; got \(uidCommands)")
+        }
         XCTAssertTrue(uidCommands[0].contains("UID COPY 3,5"), uidCommands[0])
         XCTAssertTrue(uidCommands[1].contains("UID STORE 3,5") && uidCommands[1].contains("\\DELETED"), uidCommands[1])
         XCTAssertTrue(uidCommands[2].contains("UID EXPUNGE 3,5"), uidCommands[2])
@@ -503,8 +505,8 @@ final class IMAPExpungeSafetyTests: XCTestCase {
         try await client.moveMessages(uids: [3, 5], from: "INBOX", to: "Archive")
 
         let uidCommands = mockServer.receivedCommands.map { $0.uppercased() }.filter { $0.contains("UID ") }
+        XCTAssertEqual(uidCommands, uidCommands.filter { $0.contains("UID MOVE 3,5") }, "only UID MOVE may be sent")
         XCTAssertEqual(uidCommands.count, 1, uidCommands.joined(separator: " | "))
-        XCTAssertTrue(uidCommands[0].contains("UID MOVE 3,5"), uidCommands[0])
 
         await client.disconnect()
     }
