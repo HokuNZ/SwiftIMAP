@@ -383,25 +383,46 @@ public struct MIMEPart: Sendable, Equatable {
         return nil
     }
     
+    /// The part's declared charset as a `String.Encoding`, through CoreFoundation's IANA table
+    /// where it exists. A five-entry table here sent every other charset (GB2312, Shift_JIS,
+    /// KOI8-R, Windows-1251, Big5) down the UTF-8 path, where the decode failed and the body
+    /// rendered blank. Unknown or missing names still fall back to UTF-8.
     private var encoding: String.Encoding {
-        guard let charset = charset?.lowercased() else {
+        guard let charset = charset?.trimmingCharacters(in: .whitespaces), !charset.isEmpty else {
             return .utf8
         }
-        
-        switch charset {
-        case "utf-8", "utf8":
-            return .utf8
-        case "iso-8859-1", "latin1":
-            return .isoLatin1
-        case "us-ascii", "ascii":
-            return .ascii
-        case "utf-16":
-            return .utf16
-        case "windows-1252", "cp1252":
-            return .windowsCP1252
-        default:
-            return .utf8
+        return Self.stringEncoding(forIANACharset: charset) ?? .utf8
+    }
+
+    static func stringEncoding(forIANACharset charset: String) -> String.Encoding? {
+        #if canImport(Darwin)
+        let cfEncoding = CFStringConvertIANACharSetNameToEncoding(charset as CFString)
+        guard cfEncoding != kCFStringEncodingInvalidId else { return nil }
+        return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
+        #else
+        // swift-corelibs-foundation has no IANA table and decodes a narrower set; these are
+        // the names it can honour. GB2312 and Big5 are not among them, so they still fall back.
+        switch charset.lowercased() {
+        case "utf-8", "utf8": return .utf8
+        case "utf-16": return .utf16
+        case "utf-16be": return .utf16BigEndian
+        case "utf-16le": return .utf16LittleEndian
+        case "utf-32": return .utf32
+        case "us-ascii", "ascii": return .ascii
+        case "iso-8859-1", "latin1": return .isoLatin1
+        case "iso-8859-2", "latin2": return .isoLatin2
+        case "windows-1250", "cp1250": return .windowsCP1250
+        case "windows-1251", "cp1251": return .windowsCP1251
+        case "windows-1252", "cp1252": return .windowsCP1252
+        case "windows-1253", "cp1253": return .windowsCP1253
+        case "windows-1254", "cp1254": return .windowsCP1254
+        case "shift_jis", "shift-jis", "sjis": return .shiftJIS
+        case "euc-jp": return .japaneseEUC
+        case "iso-2022-jp": return .iso2022JP
+        case "macintosh", "x-mac-roman": return .macOSRoman
+        default: return nil
         }
+        #endif
     }
 
     private static func transferEncodingString(from encoding: ContentTransferEncoding?) -> String? {

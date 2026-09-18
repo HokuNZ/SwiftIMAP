@@ -261,6 +261,29 @@ final class MIMEParsingTests: XCTestCase {
         XCTAssertEqual(parsed.parts.first?.decodedText, "£ price")
     }
 
+    /// A charset outside the old five-entry table used to fall through to UTF-8 and fail, so a
+    /// GB2312 newsletter rendered blank. CoreFoundation knows the IANA names.
+    func testAGB2312BodyDecodesThroughTheDeclaredCharset() throws {
+        // "你好" in GB2312 is C4 E3 BA C3; base64 of those four bytes. Only CoreFoundation
+        // knows GB2312; swift-corelibs-foundation cannot decode it, so Linux keeps the fallback.
+        #if canImport(Darwin)
+        let raw = "Content-Type: text/plain; charset=gb2312\r\nContent-Transfer-Encoding: base64\r\n\r\nxOO6ww==\r\n"
+        let parsed = try XCTUnwrap(MessageSummary.parseMIMEContent(from: Data(raw.utf8)))
+        XCTAssertEqual(parsed.plainTextContent, "你好")
+        #else
+        throw XCTSkip("GB2312 decoding needs CoreFoundation")
+        #endif
+    }
+
+    func testCharsetNamesMapThroughTheIANATable() {
+        XCTAssertEqual(MIMEPart.stringEncoding(forIANACharset: "UTF-8"), .utf8)
+        XCTAssertEqual(MIMEPart.stringEncoding(forIANACharset: "iso-8859-1"), .isoLatin1)
+        XCTAssertEqual(MIMEPart.stringEncoding(forIANACharset: "windows-1252"), .windowsCP1252)
+        XCTAssertNotNil(MIMEPart.stringEncoding(forIANACharset: "Shift_JIS"), "a name outside the old table resolves")
+        XCTAssertNotNil(MIMEPart.stringEncoding(forIANACharset: "windows-1251"))
+        XCTAssertNil(MIMEPart.stringEncoding(forIANACharset: "x-not-a-charset"), "unknown names fall back to UTF-8 at the call site")
+    }
+
     /// The decodedText raw fallback: when the transfer encoding cannot be
     /// decoded, decodedText returns the raw body text rather than nil, and
     /// decodedData is nil. Pins the only reason rawBody is retained.
