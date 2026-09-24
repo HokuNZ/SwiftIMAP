@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-25
+
 ### Added
 - `MessageSummary.bodyStructure`: the message's MIME structure, populated when the fetch includes `BODYSTRUCTURE`. It was already parsed and then dropped. Lets a client learn every part's type, size and file name before downloading any part body.
 - `BodyStructure` gains `disposition` and `dispositionParameters`, and helpers for choosing parts from the structure alone: `sections` (every leaf with its RFC 3501 part number, e.g. `1.2`), `filename` (decoding RFC 2231 extended and continued values, and RFC 2047 encoded words), `isAttachment` (the same rules as `MIMEPart.isAttachment`), and `estimatedDecodedSize` (the reported size without its base64 overhead). The model moves to `Models/BodyStructure.swift`; its existing initialiser still compiles unchanged.
