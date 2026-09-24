@@ -22,6 +22,9 @@ public struct MessageSummary: Sendable, Equatable {
     /// without bracket handling. To re-emit the header, use
     /// `.map(\.bracketed).joined(separator: " ")`.
     public let references: [MessageId]
+    /// The message's MIME structure, without part bodies. Nil unless the fetch includes
+    /// `BODYSTRUCTURE`.
+    public let bodyStructure: BodyStructure?
 
     public init(
         uid: UID,
@@ -31,7 +34,8 @@ public struct MessageSummary: Sendable, Equatable {
         internalDate: Date,
         size: UInt32,
         envelope: Envelope? = nil,
-        references: [MessageId] = []
+        references: [MessageId] = [],
+        bodyStructure: BodyStructure? = nil
     ) {
         self.uid = uid
         self.sequenceNumber = sequenceNumber
@@ -41,6 +45,7 @@ public struct MessageSummary: Sendable, Equatable {
         self.size = size
         self.envelope = envelope
         self.references = references
+        self.bodyStructure = bodyStructure
     }
 }
 
@@ -135,44 +140,5 @@ public struct Envelope: Sendable, Equatable {
         self.bccEntries = bccEntries ?? bcc.map { .mailbox($0) }
         self.inReplyTo = inReplyTo
         self.messageId = messageId
-    }
-}
-
-public struct BodyStructure: Sendable, Equatable {
-    public let type: String
-    public let subtype: String
-    public let parameters: [String: String]
-    public let id: String?
-    public let description: String?
-    public let encoding: String
-    public let size: UInt32
-    public let parts: [BodyStructure]
-    
-    public init(
-        type: String,
-        subtype: String,
-        parameters: [String: String] = [:],
-        id: String? = nil,
-        description: String? = nil,
-        encoding: String,
-        size: UInt32,
-        parts: [BodyStructure] = []
-    ) {
-        self.type = type
-        self.subtype = subtype
-        self.parameters = parameters
-        self.id = id
-        self.description = description
-        self.encoding = encoding
-        self.size = size
-        self.parts = parts
-    }
-    
-    public var mimeType: String {
-        "\(type)/\(subtype)".lowercased()
-    }
-    
-    public var isMultipart: Bool {
-        type.lowercased() == "multipart"
     }
 }

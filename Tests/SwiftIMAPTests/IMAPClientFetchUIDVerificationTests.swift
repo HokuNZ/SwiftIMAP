@@ -227,6 +227,72 @@ final class IMAPClientFetchUIDVerificationTests: XCTestCase {
 
     // MARK: - Helpers
 
+    // MARK: - fetchMessageBody(structure:including:)
+
+    private let alternativePlusPDF: BodyStructure = {
+        let plain = BodyStructure(type: "TEXT", subtype: "PLAIN", parameters: ["charset": "UTF-8"], encoding: "7BIT", size: 5)
+        let html = BodyStructure(type: "TEXT", subtype: "HTML", parameters: ["charset": "UTF-8"], encoding: "7BIT", size: 12)
+        let alternative = BodyStructure(type: "MULTIPART", subtype: "ALTERNATIVE", encoding: "7BIT", size: 0, parts: [plain, html])
+        let pdf = BodyStructure(
+            type: "APPLICATION",
+            subtype: "PDF",
+            encoding: "BASE64",
+            size: 78000,
+            disposition: "ATTACHMENT",
+            dispositionParameters: ["filename": "report.pdf"]
+        )
+        return BodyStructure(type: "MULTIPART", subtype: "MIXED", encoding: "7BIT", size: 0, parts: [alternative, pdf])
+    }()
+
+    func testNarrowedFetchRequestsOnlyTheSelectedSectionsAndRebuildsTheMessage() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(
+            for: "UID FETCH",
+            response: "* 1 FETCH (UID 42 BODY[1.1] {5}\r\nHello BODY[1.2] {12}\r\n<p>Hello</p>)"
+        )
+
+        let client = makeClient()
+        try await client.connect()
+        let message = try await client.fetchMessageBody(uid: 42, in: "INBOX", structure: alternativePlusPDF) {
+            !$0.part.isAttachment
+        }
+        await client.disconnect()
+
+        let fetch = try XCTUnwrap(mockServer.receivedCommands.first { $0.contains("UID FETCH") })
+        XCTAssertTrue(fetch.contains("BODY.PEEK[1.1]") && fetch.contains("BODY.PEEK[1.2]"), fetch)
+        XCTAssertFalse(fetch.contains("[2]"), "the attachment is never requested: \(fetch)")
+
+        let parsed = try XCTUnwrap(MessageSummary.parseMIMEContent(from: try XCTUnwrap(message)))
+        XCTAssertEqual(parsed.plainTextContent?.trimmingCharacters(in: .whitespacesAndNewlines), "Hello")
+        XCTAssertEqual(parsed.htmlContent?.trimmingCharacters(in: .whitespacesAndNewlines), "<p>Hello</p>")
+    }
+
+    func testNarrowedFetchIgnoresAResponseForAnotherUID() async throws {
+        mockServer.setResponse(for: "CAPABILITY", response: "* CAPABILITY IMAP4rev1 LOGIN")
+        mockServer.setResponse(for: "LOGIN", response: "OK LOGIN completed")
+        mockServer.setResponse(for: "SELECT", response: "OK [READ-WRITE] SELECT completed")
+        mockServer.setResponse(for: "UID FETCH", response: "* 1 FETCH (UID 999 BODY[1.1] {5}\r\nWrong)")
+
+        let client = makeClient()
+        try await client.connect()
+        let message = try await client.fetchMessageBody(uid: 42, in: "INBOX", structure: alternativePlusPDF) {
+            !$0.part.isAttachment
+        }
+        await client.disconnect()
+        XCTAssertNil(message)
+    }
+
+    func testNarrowedFetchWithNothingSelectedSendsNoCommand() async throws {
+        let client = makeClient()
+        let message = try await client.fetchMessageBody(uid: 42, in: "INBOX", structure: alternativePlusPDF) { _ in
+            false
+        }
+        XCTAssertNil(message)
+        XCTAssertFalse(mockServer.receivedCommands.contains { $0.contains("FETCH") })
+    }
+
     private func makeClient() -> IMAPClient {
         IMAPClient(
             configuration: IMAPConfiguration(

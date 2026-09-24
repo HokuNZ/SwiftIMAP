@@ -217,4 +217,68 @@ extension IMAPClient {
             }
         )
     }
+
+    /// Fetches only the leaf parts `include` accepts, in one `UID FETCH`, and returns them as
+    /// a MIME message rebuilt from `structure` (see `BodyStructure.assembleMessage`). For
+    /// reading a message's text without downloading its attachments: pass the
+    /// `bodyStructure` from a listing fetch and select the parts that are not attachments.
+    ///
+    /// - Returns: The rebuilt message; nil if the server returned none of the selected parts
+    ///   for this UID, or if `include` selected none.
+    /// - Throws: `IMAPError` as `fetchMessageBody(uid:in:peek:)`.
+    public func fetchMessageBody(
+        uid: UID,
+        in mailbox: String,
+        structure: BodyStructure,
+        including include: (BodyStructure.Section) -> Bool,
+        peek: Bool = true
+    ) async throws -> Data? {
+        let wanted = structure.sections.filter(include).map(\.number)
+        guard !wanted.isEmpty else { return nil }
+
+        return try await retryHandler.executeWithReconnect(
+            operation: "fetchMessageBody",
+            needsReconnect: { error in
+                (error as? IMAPError)?.requiresReconnection ?? false
+            },
+            reconnect: {
+                try await self.connect()
+            },
+            work: {
+                _ = try await self.selectMailbox(mailbox)
+
+                let responses = try await self.connection.sendCommand(
+                    .uid(.fetch(
+                        sequence: .single(uid),
+                        items: [.uid] + wanted.map { .bodySection(section: $0, peek: peek) }
+                    ))
+                )
+
+                var bodies: [String: Data] = [:]
+                for response in responses {
+                    guard case .untagged(.fetch(_, let attributes)) = response else { continue }
+                    var responseUID: UID?
+                    var found: [String: Data] = [:]
+                    for attribute in attributes {
+                        switch attribute {
+                        case .uid(let fetchedUID):
+                            responseUID = fetchedUID
+                        case let .body(section?, _, data?), let .bodyPeek(section?, _, data?):
+                            found[section] = data
+                        default:
+                            continue
+                        }
+                    }
+                    guard responseUID == uid else {
+                        self.logger.debug("UID mismatch in fetchMessageBody: requested \(uid), received \(responseUID.map(String.init) ?? "none") - skipping response")
+                        continue
+                    }
+                    bodies.merge(found) { _, new in new }
+                }
+
+                guard !bodies.isEmpty else { return nil }
+                return structure.assembleMessage(sectionBodies: bodies)
+            }
+        )
+    }
 }
