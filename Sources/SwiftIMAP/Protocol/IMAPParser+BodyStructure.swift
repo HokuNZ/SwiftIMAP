@@ -1,6 +1,47 @@
 import Foundation
 
 extension IMAPParser {
+    /// A body structure, or nil when this one does not parse. The structure is skipped rather
+    /// than failing the whole response: in a listing `FETCH` one unusual message would
+    /// otherwise lose every other message's attributes. The skip consumes any literals inside
+    /// the structure so later ones stay aligned; it throws only if the parentheses do not balance.
+    func parseBodyStructureTolerantly(_ scanner: Scanner) throws -> IMAPResponse.BodyStructureData? {
+        let start = scanner.currentIndex
+        let literals = literalCheckpoint
+        do {
+            return try parseBodyStructure(scanner)
+        } catch {
+            scanner.currentIndex = start
+            literalCheckpoint = literals
+            try skipParenthesisedValue(scanner)
+            return nil
+        }
+    }
+
+    private func skipParenthesisedValue(_ scanner: Scanner) throws {
+        guard scanner.scanString("(") != nil else {
+            throw IMAPError.parsingError("Expected opening parenthesis for body structure")
+        }
+        var depth = 1
+        while depth > 0 {
+            if scanner.isAtEnd {
+                throw IMAPError.parsingError("Unbalanced body structure")
+            }
+            if scanner.scanString("~LITERAL~") != nil {
+                _ = try nextLiteralData()
+            } else if scanner.scanString("\"") != nil {
+                scanner.currentIndex = scanner.string.index(before: scanner.currentIndex)
+                _ = try parseQuotedString(scanner)
+            } else if scanner.scanString("(") != nil {
+                depth += 1
+            } else if scanner.scanString(")") != nil {
+                depth -= 1
+            } else {
+                _ = scanner.scanCharacter()
+            }
+        }
+    }
+
     func parseBodyStructure(_ scanner: Scanner) throws -> IMAPResponse.BodyStructureData {
         guard scanner.scanString("(") != nil else {
             throw IMAPError.parsingError("Expected opening parenthesis for body structure")

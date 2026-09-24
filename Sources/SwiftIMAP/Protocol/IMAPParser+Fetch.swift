@@ -92,15 +92,9 @@ extension IMAPParser {
             let envelope = try parseEnvelopeData(scanner)
             return .envelope(envelope)
 
-        case "BODYSTRUCTURE":
+        case "BODYSTRUCTURE", "BODY":
             _ = scanner.scanCharacters(from: .whitespaces)
-            let bodyStructure = try parseBodyStructure(scanner)
-            return .bodyStructure(bodyStructure)
-
-        case "BODY":
-            _ = scanner.scanCharacters(from: .whitespaces)
-            let bodyStructure = try parseBodyStructure(scanner)
-            return .bodyStructure(bodyStructure)
+            return try parseBodyStructureTolerantly(scanner).map { .bodyStructure($0) }
 
         default:
             // Check if this might be a BODY attribute

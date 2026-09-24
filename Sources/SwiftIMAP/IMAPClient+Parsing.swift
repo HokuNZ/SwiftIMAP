@@ -12,6 +12,7 @@ extension IMAPClient {
         var size: UInt32?
         var envelope: Envelope?
         var references: [MessageId] = []
+        var bodyStructure: BodyStructure?
 
         for attribute in attributes {
             switch attribute {
@@ -33,6 +34,8 @@ extension IMAPClient {
                 size = sizeValue
             case .envelope(let env):
                 envelope = parseEnvelope(env)
+            case .bodyStructure(let structure):
+                bodyStructure = BodyStructure(structure)
             case .headerFields(let fields, let data):
                 // Parse References header if present
                 if fields.contains(where: { $0.uppercased() == "REFERENCES" }) {
@@ -57,7 +60,8 @@ extension IMAPClient {
             internalDate: internalDate,
             size: size,
             envelope: envelope,
-            references: references
+            references: references,
+            bodyStructure: bodyStructure
         )
     }
 
