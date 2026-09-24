@@ -166,4 +166,44 @@ final class BodyStructureTests: XCTestCase {
         XCTAssertEqual(try MessageSummary.parseMIMEContent(from: message)?.plainTextContent?
             .trimmingCharacters(in: .whitespacesAndNewlines), "Hello")
     }
+
+    // MARK: - A structure that does not parse
+
+    private func attributes(_ input: String) throws -> [IMAPResponse.FetchAttribute] {
+        let parser = IMAPParser()
+        parser.append(Data(input.utf8))
+        guard case .untagged(.fetch(_, let attributes))? = try parser.parseResponses().first else {
+            XCTFail("expected a FETCH")
+            return []
+        }
+        return attributes
+    }
+
+    func testAnUnparseableStructureIsSkippedAndTheRestOfTheResponseSurvives() throws {
+        // "BOGUS" where the size belongs: the structure is malformed, the parentheses are not.
+        let attributes = try attributes("* 1 FETCH (UID 7 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" NIL NIL NIL \"7BIT\" BOGUS 1) FLAGS (\\Seen))\r\n")
+        XCTAssertTrue(attributes.contains(.uid(7)))
+        XCTAssertTrue(attributes.contains(.flags(["\\Seen"])))
+        XCTAssertFalse(attributes.contains { if case .bodyStructure = $0 { return true } else { return false } })
+    }
+
+    func testASkippedStructureConsumesItsLiteralsSoLaterOnesStayAligned() throws {
+        let input = "* 1 FETCH (UID 7 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"NAME\" {5}\r\nx.txt) NIL NIL \"7BIT\" BOGUS 1) "
+            + "BODY[1] {5}\r\nHello)\r\n"
+        let attributes = try attributes(input)
+        let body = attributes.compactMap { attribute -> Data? in
+            if case .body(_, _, let data) = attribute { return data }
+            return nil
+        }.first
+        XCTAssertEqual(body.flatMap { String(data: $0, encoding: .utf8) }, "Hello")
+    }
+
+    func testAStructureWithALiteralStillParses() throws {
+        let attributes = try attributes("* 1 FETCH (BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"NAME\" {5}\r\nx.txt) NIL NIL \"7BIT\" 5 1))\r\n")
+        let structure = attributes.compactMap { attribute -> IMAPResponse.BodyStructureData? in
+            if case .bodyStructure(let data) = attribute { return data }
+            return nil
+        }.first
+        XCTAssertEqual(structure.map(BodyStructure.init)?.filename, "x.txt")
+    }
 }

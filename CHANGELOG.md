@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BodyStructure` gains `disposition` and `dispositionParameters`, and helpers for choosing parts from the structure alone: `sections` (every leaf with its RFC 3501 part number, e.g. `1.2`), `filename` (decoding RFC 2231 extended and continued values, and RFC 2047 encoded words), `isAttachment` (the same rules as `MIMEPart.isAttachment`), and `estimatedDecodedSize` (the reported size without its base64 overhead). The model moves to `Models/BodyStructure.swift`; its existing initialiser still compiles unchanged.
 - `IMAPClient.fetchMessageBody(uid:in:structure:including:peek:)` fetches only the leaf parts a predicate selects, in one `UID FETCH`, and returns them as a MIME message rebuilt from the structure (`BodyStructure.assembleMessage(sectionBodies:)`). Reading a message's text no longer means downloading its attachments.
 
+### Changed
+- A `BODYSTRUCTURE` (or `BODY`) attribute that does not parse is now skipped, leaving `bodyStructure` nil, rather than failing the whole response. Asking for the structure in a listing fetch can no longer lose every other message's attributes over one unusual message. Literals inside the skipped structure are consumed so later ones stay aligned.
+
 ## [2.0.2] - 2026-09-18
 
 ### Fixed

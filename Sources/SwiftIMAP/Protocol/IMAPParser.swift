@@ -201,6 +201,12 @@ public final class IMAPParser {
         return parts[1].uppercased() == "FETCH"
     }
 
+    /// The pending literals, for a parse that may need to back out and try again.
+    var literalCheckpoint: [Data] {
+        get { literalQueue }
+        set { literalQueue = newValue }
+    }
+
     func nextLiteralData() throws -> Data {
         guard !literalQueue.isEmpty else {
             throw IMAPError.parsingError("Missing literal data for placeholder")
