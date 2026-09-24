@@ -142,4 +142,28 @@ final class BodyStructureTests: XCTestCase {
     func testAssemblyWithNoBodiesIsNil() throws {
         XCTAssertNil(try structure(from: mixedWithAttachment).assembleMessage(sectionBodies: [:]))
     }
+
+    func testSectionsNumberThreeLevelsDeep() {
+        let text = BodyStructure(type: "TEXT", subtype: "PLAIN", encoding: "7BIT", size: 1)
+        let related = BodyStructure(type: "MULTIPART", subtype: "RELATED", encoding: "7BIT", size: 0,
+                                    parts: [text, leaf("IMAGE", "PNG", id: "<a@b>", disposition: "INLINE")])
+        let alternative = BodyStructure(type: "MULTIPART", subtype: "ALTERNATIVE", encoding: "7BIT", size: 0,
+                                        parts: [text, related])
+        let mixed = BodyStructure(type: "MULTIPART", subtype: "MIXED", encoding: "7BIT", size: 0,
+                                  parts: [alternative, leaf("APPLICATION", "PDF")])
+        XCTAssertEqual(mixed.sections.map(\.number), ["1.1", "1.2.1", "1.2.2", "2"])
+    }
+
+    func testAssemblyCannotBeSteeredByAHostileSubtype() throws {
+        let text = BodyStructure(type: "TEXT", subtype: "PLAIN\"; boundary=\"x", parameters: ["charset": "UTF-8"],
+                                 encoding: "7BIT\r\nX-Injected: yes", size: 5)
+        let mixed = BodyStructure(type: "MULTIPART", subtype: "MIXED\"; boundary=\"x", encoding: "7BIT", size: 0,
+                                  parts: [text])
+        let message = try XCTUnwrap(mixed.assembleMessage(sectionBodies: ["1": Data("Hello".utf8)]))
+        let raw = try XCTUnwrap(String(data: message, encoding: .utf8))
+        XCTAssertFalse(raw.contains("X-Injected"))
+        XCTAssertFalse(raw.contains("boundary=\"x"))
+        XCTAssertEqual(try MessageSummary.parseMIMEContent(from: message)?.plainTextContent?
+            .trimmingCharacters(in: .whitespacesAndNewlines), "Hello")
+    }
 }

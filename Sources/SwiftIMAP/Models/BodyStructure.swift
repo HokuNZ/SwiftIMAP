@@ -222,7 +222,7 @@ extension BodyStructure {
     private func assemble(number: String?, bodies: [String: Data], token: String) -> Data? {
         guard isMultipart else {
             guard let number, let body = bodies[number] else { return nil }
-            var part = Data(leafHeaders().utf8)
+            var part = Data(partHeaders(boundary: nil).utf8)
             part.append(Data("\r\n".utf8))
             part.append(body)
             return part
@@ -235,9 +235,8 @@ extension BodyStructure {
         guard !children.isEmpty else { return nil }
 
         let boundary = "=_SwiftIMAP_\(token)_\(number ?? "0")"
-        var otherParameters = parameters
-        otherParameters["boundary"] = nil
-        var node = Data("Content-Type: \(mimeType)\(Self.parameterList(otherParameters)); boundary=\"\(boundary)\"\r\n\r\n".utf8)
+        var node = Data(partHeaders(boundary: boundary).utf8)
+        node.append(Data("\r\n".utf8))
         for child in children {
             node.append(Data("--\(boundary)\r\n".utf8))
             node.append(child)
@@ -247,16 +246,37 @@ extension BodyStructure {
         return node
     }
 
-    private func leafHeaders() -> String {
-        var headers = "Content-Type: \(mimeType)\(Self.parameterList(parameters))\r\n"
-        headers += "Content-Transfer-Encoding: \(encoding)\r\n"
+    /// A multipart gets `boundary` in place of the server's (whose delimiters are not in the
+    /// rebuilt bytes) and no transfer encoding. Every value that came from the sender is
+    /// reduced to what its header allows, so none can end the line or add a parameter.
+    private func partHeaders(boundary: String?) -> String {
+        let type = Self.token(type, fallback: "application")
+        let subtype = Self.token(subtype, fallback: "octet-stream")
+        var contentType = parameters
+        var headers: String
+        if let boundary {
+            contentType["boundary"] = nil
+            headers = "Content-Type: \(type)/\(subtype)\(Self.parameterList(contentType)); boundary=\"\(boundary)\"\r\n"
+        } else {
+            headers = "Content-Type: \(type)/\(subtype)\(Self.parameterList(contentType))\r\n"
+            headers += "Content-Transfer-Encoding: \(Self.token(encoding, fallback: "7bit"))\r\n"
+        }
         if let id {
-            headers += "Content-ID: \(id)\r\n"
+            let printable = id.unicodeScalars.filter { $0.value > 0x20 && $0.value < 0x7F }
+            headers += "Content-ID: \(String(String.UnicodeScalarView(printable)))\r\n"
         }
         if let disposition {
-            headers += "Content-Disposition: \(disposition.lowercased())\(Self.parameterList(dispositionParameters))\r\n"
+            let type = Self.token(disposition, fallback: "attachment").lowercased()
+            headers += "Content-Disposition: \(type)\(Self.parameterList(dispositionParameters))\r\n"
         }
         return headers
+    }
+
+    /// RFC 2045 §5.1 token: printable ASCII other than space and `()<>@,;:\"/[]?=`.
+    private static func token(_ value: String, fallback: String) -> String {
+        let specials = Set("()<>@,;:\\\"/[]?=".unicodeScalars)
+        let kept = value.unicodeScalars.filter { $0.value > 0x20 && $0.value < 0x7F && !specials.contains($0) }
+        return kept.isEmpty ? fallback : String(String.UnicodeScalarView(kept)).lowercased()
     }
 
     /// `; key="value"` for each plain parameter, sorted so the output is stable. Extended
